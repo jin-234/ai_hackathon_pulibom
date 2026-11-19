@@ -1,5 +1,5 @@
 import { chat } from "./ai";
-import { findLesson } from "./curriculum";
+import { findLesson, gradeName } from "./curriculum";
 import { solveLinear } from "./equation";
 import { generateFromTemplate, listTemplates } from "./problemBank";
 
@@ -25,6 +25,8 @@ const NOT_YET: Record<number, string> = {
   1: "제곱근(√)·무리수, 피타고라스 정리, 두 점 사이의 거리, 연립방정식, 일차함수·기울기, 부등식의 해 구하기, 확률",
   2: "제곱근(√)·무리수, 이차방정식, 이차함수, 삼각비",
   3: "",
+  // 고1 (공통수학1·2): 고2 이후 내용
+  4: "지수·로그, 삼각함수, 수열, 극한, 미분·적분, 조건부확률·확률분포·통계적 추정, 벡터·이차곡선",
 };
 
 // 코드로 거르는 학년 범위: 중1·중2 는 √(제곱근)을 아직 안 배운다
@@ -63,16 +65,33 @@ function spread<T>(xs: T[], n: number) {
   return Array.from({ length: n }, (_, i) => xs[Math.round((i * (xs.length - 1)) / (n - 1))]);
 }
 
-async function fromAi(grade: number, unitName: string, lessonName: string, desc: string, count: number): Promise<UnitItem[]> {
+// 보충 문항: 학생이 풀이에서 틀린 단계의 개념(예: 이차방정식을 풀다 틀린 인수분해) 위주로. 소단원 출제와 같은 검산을 거친다
+//  basis: 학생의 오답 풀이 (문항 : 풀이 줄 (채점 근거)). 학생 이름은 넣지 않는다
+export async function draftConceptProblems(opts: { grade: number; concept: string; basis: string[]; count: number }): Promise<UnitItem[]> {
+  const focus = `[학생이 틀린 풀이]
+${opts.basis.join("\n") || "(없음)"}
+이 학생은 위 풀이에서 '${opts.concept}' 단계를 틀렸다. 보충 문항이니 문제 전체가 '${opts.concept}' 를 직접 연습하는 문항이어야 한다 (예: 이차방정식을 풀다 인수분해를 틀렸으면 "다음 식을 인수분해하시오" 문항). 학생이 틀린 것과 같은 함정(부호, 계수, 빠뜨린 항 등)이 들어가게 만들고, 틀린 문항을 숫자만 바꿔 그대로 내지는 않는다.`;
+  return fromAi(opts.grade, "보충 학습", opts.concept, `학생이 풀이에서 틀린 '${opts.concept}' 단계`, opts.count, focus);
+}
+
+async function fromAi(grade: number, unitName: string, lessonName: string, desc: string, count: number, focus = ""): Promise<UnitItem[]> {
   // 버린 문항 때문에 모자라면 한 번 더 만든다 (최대 2번)
   const items: UnitItem[] = [];
   const seen = new Set<string>();
+  // AI 가 JSON 을 깨뜨려 보낸 판(복소수·행렬처럼 기호가 많은 단원에서 가끔)은 버리고 다시 만든다
+  let failed: Error | null = null;
   for (let round = 0; round < 2; round++) {
-    const got = await aiRound(grade, unitName, lessonName, desc, count, seen, round > 0);
+    let got: UnitItem[];
+    try {
+      got = await aiRound(grade, unitName, lessonName, desc, count, seen, round > 0, focus);
+    } catch (e) {
+      failed = e as Error;
+      continue;
+    }
     items.push(...got.filter((it) => !it.reject));
     if (items.filter((it) => !it.doubt).length >= count) break;
   }
-  if (!items.length) throw new Error("AI가 쓸 만한 문항을 만들지 못했어요. 다시 시도해 주세요.");
+  if (!items.length) throw failed ?? new Error("AI가 쓸 만한 문항을 만들지 못했어요. 다시 시도해 주세요.");
   // 검산이 맞는 문항 먼저 (원래 순서 유지), 모자라면 어긋난 문항을 표시해서
   const ok = items.filter((it) => !it.doubt);
   const doubtful = items.filter((it) => it.doubt);
@@ -81,11 +100,11 @@ async function fromAi(grade: number, unitName: string, lessonName: string, desc:
     .sort((a, b) => items.indexOf(a) - items.indexOf(b));
 }
 
-async function aiRound(grade: number, unitName: string, lessonName: string, desc: string, count: number, seen: Set<string>, retry: boolean): Promise<UnitItem[]> {
+async function aiRound(grade: number, unitName: string, lessonName: string, desc: string, count: number, seen: Set<string>, retry: boolean, focus = ""): Promise<UnitItem[]> {
   const notYet = NOT_YET[grade] ?? "";
-  const system = `너는 중학교 ${grade}학년 수학 교사를 돕는 출제 도우미다. 2022 개정 교육과정 범위 안에서 학생이 손으로 풀이를 쓰는 과제 문항을 만든다.
+  const system = `너는 ${gradeName(grade)} 수학 교사를 돕는 출제 도우미다. 2022 개정 교육과정 범위 안에서 학생이 손으로 풀이를 쓰는 과제 문항을 만든다.
 규칙:
-- 주어진 소단원 학습 내용 안에서만 낸다. 다음 학년 내용은 쓰지 않는다.${notYet ? `\n- 중학교 ${grade}학년은 아직 다음을 배우지 않았다. 문제·정답·풀이 어디에도 쓰지 않는다: ${notYet}.` : ""}
+- 주어진 소단원 학습 내용 안에서만 낸다. 다음 학년 내용은 쓰지 않는다.${notYet ? `\n- ${gradeName(grade)}은 아직 다음을 배우지 않았다. 문제·정답·풀이 어디에도 쓰지 않는다: ${notYet}.` : ""}
 - 문제 조건끼리 모순이 없어야 한다. 예: y좌표가 -3인 점 B(a, -3)은 x축 위에 있을 수 없으니 "x축 위에 있을 때 a는?" 같은 문제는 내지 않는다.
 - 그림·그래프·도형 그림이 없어도 풀 수 있게, 필요한 조건은 글과 식으로 모두 쓴다.
 - 첫 문항은 쉽게, 뒤로 갈수록 조금씩 어렵게. 같은 유형만 반복하지 않는다.
@@ -94,11 +113,18 @@ async function aiRound(grade: number, unitName: string, lessonName: string, desc
 - solution 은 풀이 단계를 2~5줄로, 한 줄에 한 단계.
 - checks 에는 정답을 문제의 조건에 대입한 검산식을 숫자로만 쓴다. 양변을 == 로 비교하고, 쓸 수 있는 것은 숫자, + - * / ^, 괄호, pi, sqrt( ) 뿐이다.
   예: 동전 문제 정답 12개 → "100*12 + 500*(20-12) == 5200", 부채꼴 넓이 50π/3 → "pi*10^2*60/360 == 50*pi/3". 조건마다 하나씩.
-- 학생 이름 등 실제 인물 정보는 쓰지 않는다.
+- 학생 이름 등 실제 인물 정보는 쓰지 않는다.${
+    grade >= 4
+      ? `
+- 학생이 손으로 쓰기 쉬운 표기로 쓴다: 허수단위는 i, 거듭제곱은 x^2, 제곱근은 √(-9), 순열·조합은 5P2·5C2, 집합은 {1, 2, 3}, 행렬은 [[1, 2], [3, 4]].
+- LaTeX($, \\sqrt, \\bar, \\frac 등)는 화면에 그대로 보이니 쓰지 않는다. 켤레복소수는 "z 의 켤레복소수" 처럼 말로 쓴다.
+- 복소수·행렬·집합처럼 숫자 하나로 계산할 수 없는 검산은 checks 에 넣지 않는다 (빈 배열이면 다음 단계에서 다시 풀어 검산한다).`
+      : ""
+  }
 - JSON만 출력: {"items": [{"question": "...", "answer": "...", "solution": ["...", "..."], "checks": ["..."]}]}`;
-  const user = `[학년] 중학교 ${grade}학년
+  const user = `[학년] ${gradeName(grade)}
 [단원] ${unitName} > ${lessonName}
-[학습 내용] ${desc}
+[학습 내용] ${desc}${focus ? `\n${focus}` : ""}
 문항 ${count + 2}개를 만들어라.${retry ? "\n앞에서 만든 문항과 겹치지 않게, 조건이 모순되지 않고 학년 범위 안인 문항만." : ""}`;
   let parsed: { items?: { question?: unknown; answer?: unknown; solution?: unknown; checks?: unknown }[] };
   try {
@@ -150,11 +176,11 @@ async function aiRound(grade: number, unitName: string, lessonName: string, desc
 //  검산 쪽도 조건이 모순되는 문제(답이 없거나 여러 개)를 찾으면 doubt
 async function crossCheck(grade: number, items: UnitItem[]) {
   if (!items.length) return;
-  const system = `너는 중학교 ${grade}학년 수학 문제를 처음 보는 학생처럼 직접 푸는 검산 도우미다.
+  const system = `너는 ${gradeName(grade)} 수학 문제를 처음 보는 학생처럼 직접 푸는 검산 도우미다.
 규칙:
 - 각 문제를 처음부터 식을 세워 직접 계산한다. 계산 과정을 work 에 짧게 쓰고, 마지막에 구한 답을 answer 에 쓴다.
 - 구한 답을 문제의 모든 조건에 다시 대입해 확인한다. 조건이 서로 맞지 않거나 답이 없거나 여러 개면 problem 에 이유를 쓴다 (문제없으면 빈 문자열).
-- 중학교 ${grade}학년이 아직 배우지 않은 내용${NOT_YET[grade] ? ` (${NOT_YET[grade]})` : ""}이 있어야 풀리면 problem 에 "학년 범위 밖: 이유"를 쓴다.
+- ${gradeName(grade)}이 아직 배우지 않은 내용${NOT_YET[grade] ? ` (${NOT_YET[grade]})` : ""}이 있어야 풀리면 problem 에 "학년 범위 밖: 이유"를 쓴다.
 - JSON만 출력: {"results": [{"no": 1, "work": "...", "answer": "...", "problem": ""}]}`;
   const user = items.map((it, i) => `${i + 1}. ${it.question}`).join("\n");
   try {

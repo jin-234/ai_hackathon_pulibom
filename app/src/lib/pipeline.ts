@@ -4,7 +4,7 @@ import { ocrFromStrokes } from "./ocrImage";
 import { updateSubmission } from "./store";
 import { inkStats, type Submission } from "./types";
 
-// 제출 1건 분석: OCR용 이미지 렌더링 → 업스테이지 OCR → (확신 없으면) Mathpix → Claude 다시 읽기 → Solar 보정·채점 → 저장
+// 제출 1건 분석: OCR용 이미지 렌더링 → 업스테이지 OCR → (확신 없으면) Claude 다시 읽기 → Solar 보정·채점 → 저장
 export async function runPipeline(s: Submission, png: Buffer) {
   try {
     if (!hasUpstageKey()) {
