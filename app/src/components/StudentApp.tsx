@@ -91,8 +91,6 @@ export default function StudentApp({
   const [color, setColor] = useState(INK_COLORS[0]);
   const [thick, setThick] = useState(false);
   const scratchRef = useRef<Record<string, Stroke[]>>({ ...initialScratch });
-  // 칸 배치: 모든 문항이 연습장 + 정리 풀이 두 칸으로 시작한다 (학생이 정리 풀이 한 칸으로 바꿀 수도 있다)
-  const [twoPaneOf, setTwoPaneOf] = useState<Record<string, boolean>>({});
   // 문항별 풀이: 마지막으로 낸 풀이로 시작하고, 다른 문항으로 넘어갈 때 쓰던 풀이도 여기에 남겨 둔다
   const inkRef = useRef<Record<string, Stroke[]>>({ ...initialStrokes });
   const problem = PROBLEMS[idx];
@@ -109,7 +107,6 @@ export default function StudentApp({
   const answerKey = (problemId: string) => `pulibom:draft-answer:${studentId}:${problemId}`;
   const scratchKey = (problemId: string) => `pulibom:draft-scratch:${studentId}:${problemId}`;
   const draftAtKey = (problemId: string) => `pulibom:draft-at:${studentId}:${problemId}`;
-  const twoPane = twoPaneOf[problem.id] ?? true;
   const figure = problem.figure;
   // 객관식이면 답안 칸 대신 보기 번호를 골라 답한다
   const choices = splitChoices(problem.question).choices;
@@ -387,7 +384,7 @@ export default function StudentApp({
       requestAnimationFrame(() => requestAnimationFrame(() => setSlide({ x: 0, anim: true })));
     }, 180);
   };
-  const undoActive = () => (activeRef.current === "pad" && twoPane ? pad : canvas).current?.undo();
+  const undoActive = () => (activeRef.current === "pad" ? pad : canvas).current?.undo();
   const clearAll = () => {
     if (!confirm("이 문항에 쓴 필기를 모두 지울까요?")) return;
     canvas.current?.clear();
@@ -542,8 +539,8 @@ export default function StudentApp({
             transition: slide.anim ? "transform 0.26s cubic-bezier(0.22, 1, 0.36, 1)" : "none",
           }}
         >
-          {/* 문제 칸: 그림 문제를 두 칸으로 풀 때는 연습장에 문제 글·그림이 있으니 숨기고 풀이 칸을 위로 올린다 */}
-          {!(figure && twoPane) && (
+          {/* 문제 칸: 그림 문제는 연습장에 문제 글·그림이 있으니 숨기고 풀이 칸을 위로 올린다 */}
+          {!figure && (
           <section key={problem.id} className="problem-in flex shrink-0 items-stretch gap-3">
             <div className="flex min-w-0 flex-1 flex-col gap-1.5">
               <div className="w-fit rounded-full border border-line px-3 py-0.5 text-[11px] font-bold tracking-[0.14em] text-olive">
@@ -588,17 +585,6 @@ export default function StudentApp({
           <section className="flex min-h-0 flex-1 flex-col gap-2 rounded-[2rem] border border-line bg-paper/70 p-3">
             <div className="flex flex-wrap items-center gap-2">
               <span className="mr-auto text-sm font-semibold text-muted">나의 풀이</span>
-              <div className="flex overflow-hidden rounded-full border border-line bg-paper text-sm">
-                {([false, true] as const).map((two) => (
-                  <button
-                    key={String(two)}
-                    onClick={() => setTwoPaneOf((m) => ({ ...m, [problem.id]: two }))}
-                    className={`px-4 py-2 font-semibold transition ${twoPane === two ? "bg-honey text-ink" : "text-muted"}`}
-                  >
-                    {two ? "그림 있는 문제" : "그림 없는 문제"}
-                  </button>
-                ))}
-              </div>
               <button onClick={undoActive} className="rounded-full border border-line bg-paper px-4 py-2 text-sm font-semibold">
                 되돌리기
               </button>
@@ -608,8 +594,8 @@ export default function StudentApp({
             </div>
 
             {/* 두 칸: 가로 화면은 연습장 | 정리 풀이 나란히, 세로 화면은 위아래 */}
-            <div className={`grid min-h-0 flex-1 gap-3 ${twoPane ? "grid-rows-2 md:landscape:grid-cols-2 md:landscape:grid-rows-1" : "grid-rows-1"}`}>
-              <div className={`min-h-0 flex-col gap-1.5 ${twoPane ? "flex" : "hidden"}`}>
+            <div className="grid min-h-0 flex-1 grid-rows-2 gap-3 md:landscape:grid-cols-2 md:landscape:grid-rows-1">
+              <div className="flex min-h-0 flex-col gap-1.5">
                 <div className="flex items-center justify-between px-1 text-sm">
                   <b className="text-muted">연습장</b>
                   <span className="font-semibold text-olive">AI는 채점하지 않아요</span>
