@@ -5,7 +5,7 @@
 //   npm run test:ocr            요약 + 틀린 풀이
 //   npm run test:ocr -- --all   맞은 풀이도 출력
 //   npm run test:ocr -- --no-vision   OCR 이 확신 없는 줄을 Claude 로 다시 읽는 단계 끄기 (비교용)
-//   npm run test:ocr -- --vision=lines | --vision=full   다시 읽는 방식 (기본 .env VISION_MODE, 없으면 full)
+//   npm run test:ocr -- --vision=lines | --vision=full   다시 읽는 방식 (기본 .env VISION_MODE, 없으면 lines)
 import { readFileSync } from "fs";
 import { correctOcr } from "../src/lib/ai";
 import { query } from "../src/lib/db";
