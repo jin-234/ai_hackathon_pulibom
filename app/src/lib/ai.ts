@@ -2,7 +2,6 @@ import type { Analysis, ErrorType, Problem } from "./types";
 import { ERROR_LABEL, LOW_OCR_CONFIDENCE, variableOf } from "./types";
 
 export { variableOf };
-import { runClaude } from "./claudeCli";
 import { env } from "./env";
 import { linearForm, solveLinear } from "./equation";
 
@@ -194,8 +193,7 @@ ${
     )
     .join("\n")}`;
   try {
-    // 제출 채점 경로는 Claude 만 쓴다 (Solar 안 씀)
-    const text = await runClaude(`${user}\n\n다른 말 없이 JSON만 출력한다.`, { model: GRADING_CLAUDE_MODEL(), system });
+    const text = await chat(system, user, 0);
     const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}") as { lines?: unknown[] };
     const lines = Array.isArray(parsed.lines) ? parsed.lines.map((l) => normalizeMath(String(l), v)) : [];
     if (lines.length !== ocrLines.length) return ocrLines;
@@ -405,8 +403,21 @@ ${ocrLines.length ? `[학생이 답으로 쓴 마지막 줄] ${correctedLines[oc
 다음 형식의 JSON으로 답하라:
 {"recognizedAnswer": "풀이에서 찾은 최종 답 (예: x=4) 또는 null", "correct": true|false|null, "firstErrorLine": 줄번호 또는 null, "errorType": "4단계에서 고른 코드", "concept": "관련 개념", "reason": "어디서 무엇을 잘못했는지 (틀린 식 인용, 2문장 이내)", "suggestion": "교사가 학생에게 해볼 확인 질문 또는 보충 지도 방향 (2문장 이내)", "needsReview": true|false}`;
 
-  // 채점 모델: 이 컴퓨터의 Claude Code 헤드리스(claude -p, 구독). Solar 로 대신 채점하지 않는다
-  const { text, model: usedModel } = await gradeCall(system, user);
+  const res = await fetch(`${BASE_URL()}/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${ANALYSIS_KEY()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: MODEL(),
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      temperature: 0, // 같은 풀이면 같은 채점·오류 유형 (학생별 약점 집계의 기준)
+    }),
+  });
+  if (!res.ok) throw new Error(`분석 실패 ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data = (await res.json()) as { choices?: { message?: { content?: string } }[]; model?: string };
+  const text = data.choices?.[0]?.message?.content ?? "";
   const json = text.match(/\{[\s\S]*\}/)?.[0];
   if (!json) throw new Error(`분석 결과에서 JSON을 찾지 못함: ${text.slice(0, 200)}`);
   const parsed = JSON.parse(json) as Partial<Analysis>;
@@ -429,7 +440,7 @@ ${ocrLines.length ? `[학생이 답으로 쓴 마지막 줄] ${correctedLines[oc
       // 오류로 지목한 줄이나 답 줄을 OCR이 확신 없이 읽었으면 교사 확인으로 돌린다
       (firstErrorLine !== null && Boolean(lowConf[firstErrorLine])) ||
       Boolean(lowConf[ocrLines.length - 1]),
-    model: usedModel,
+    model: data.model ?? MODEL(),
   };
 }
 
@@ -452,18 +463,3 @@ function markSummary(marks: AnalyzeMarks) {
 }
 type AnalyzeMarks = { line: number | null; kind: "cancel" | "strike" }[] | undefined;
 
-// 채점 모델: Claude Code 헤드리스만 쓴다 (GRADING_MODEL, 기본 sonnet).
-//   실패하면(claude 없음·로그인 만료·한도·시간 초과·JSON 아님) 오류를 던져 그 풀이는 '오류' 상태가 된다 → 교사가 '다시 분석'
-const GRADING_CLAUDE_MODEL = () => env("GRADING_MODEL") ?? "sonnet";
-
-async function gradeCall(system: string, user: string): Promise<{ text: string; model: string }> {
-  const model = GRADING_CLAUDE_MODEL();
-  let text: string;
-  try {
-    text = await runClaude(`${user}\n\n다른 말 없이 JSON만 출력한다.`, { model, system });
-  } catch (e) {
-    throw new Error(`Claude 채점 실패: ${(e as Error).message.slice(0, 200)} (이 컴퓨터에 Claude Code 가 설치·로그인돼 있는지 확인해 주세요)`);
-  }
-  if (!/\{[\s\S]*\}/.test(text)) throw new Error(`Claude 채점 결과에서 JSON을 찾지 못함: ${text.slice(0, 200)}`);
-  return { text, model: `claude-cli:${model}` };
-}
