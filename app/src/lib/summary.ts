@@ -141,7 +141,7 @@ export async function summarize(input: {
   const foundationFor = (s: Submission) => {
     if (!highSchool || (s.analysis?.correct !== false && !s.teacher?.errorType)) return null;
     const p = problems.get(s.problemId);
-    return foundationOf(errOf(s), [p?.concept, s.analysis?.concept, p?.question ?? s.question].filter(Boolean).join(" "));
+    return foundationOf(errOf(s), [p?.concept, s.analysis?.concept, p?.question ?? s.question].filter(Boolean).join(" "), s.analysis?.errorConcept);
   };
   const stats = statsForStudent(studentId, input.name, [...new Set(subs.map((s) => s.problemId))].map((id) => problems.get(id)!), subs);
   const attempt = new Map<string, number>();
