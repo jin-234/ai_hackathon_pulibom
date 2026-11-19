@@ -133,8 +133,6 @@ export default function StudentDetail({
         <MessageThread
           studentId={id}
           studentName={name ?? "학생"}
-          // 개념 영상 찾기: 많이 틀린 개념 · 반복 오류 유형
-          concepts={[student?.weakConcept ?? "", student?.repeatedError ? ERROR_LABEL[student.repeatedError] : ""]}
         />
       )}
 
