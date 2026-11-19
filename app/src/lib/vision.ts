@@ -12,10 +12,10 @@ const MODELS = () =>
     .map((m) => m.trim())
     .filter(Boolean);
 export const VISION_MODEL = () => MODELS().join(",");
-// 다시 읽는 방식: full = 확신 없는 줄이 있으면 이미지 전체를 처음부터 다시 읽어 풀이를 통째로 바꿈 (줄 나누기 오류도 고침)
-//                lines = 확신 없는 줄만 잘라서 다시 읽음
+// 다시 읽는 방식: lines(기본) = 확신 없는 줄만 잘라서 다시 읽음 (풀이 칸에 줄을 그어 나눠서 줄 나누기 오류가 줄어듦)
+//                full = 확신 없는 줄이 있으면 이미지 전체를 처음부터 다시 읽어 풀이를 통째로 바꿈 (줄 나누기 오류도 고침)
 export type VisionMode = "full" | "lines";
-export const VISION_MODE = (): VisionMode => (env("VISION_MODE") === "lines" ? "lines" : "full");
+export const VISION_MODE = (): VisionMode => (env("VISION_MODE") === "full" ? "full" : "lines");
 // LLM 이 다시 읽은 줄의 신뢰도: 불확실 기준(LOW_OCR_CONFIDENCE)보다 조금 위.
 // 채점 단계가 '인식 불확실'로 보지는 않지만, 완전히 믿을 만한 값(1)도 아니다.
 export const VISION_CONFIDENCE = 0.75;
@@ -108,10 +108,14 @@ async function callModel(model: string, prompt: string, images: Buffer[]): Promi
   return (await callClaudeCli(model, prompt, images)) ?? "retry";
 }
 
+// Claude Code 기본 시스템 프롬프트(코딩 도우미용, 길다) 대신 쓰는 짧은 지시문 → 한 번에 쓰는 입력 토큰 약 절반
+// (10건 비교: 읽은 결과는 기본 프롬프트와 같거나 더 나았고, 이미지 열기 → JSON 흐름도 같음)
+const VISION_SYSTEM = "너는 손글씨 수학 풀이 이미지를 글자로 옮기는 도구다. Read 도구로 이미지 파일을 열어 보고, 요청한 JSON만 출력한다.";
+
 // Claude Code 헤드리스로 이미지 읽기 (claudeCli.ts). 실패하면 null → OCR 결과 그대로
 async function callClaudeCli(model: string, prompt: string, images: Buffer[]): Promise<unknown[] | null> {
   try {
-    const text = await runClaude(`${prompt}\n다른 말 없이 JSON만 출력한다.`, { model, images });
+    const text = await runClaude(`${prompt}\n다른 말 없이 JSON만 출력한다.`, { model, images, system: VISION_SYSTEM });
     const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}") as { lines?: unknown };
     return Array.isArray(parsed.lines) ? parsed.lines : [];
   } catch {
