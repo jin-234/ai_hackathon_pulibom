@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { findProblemWithAssignment, studentCanSee } from "@/lib/assignments";
 import { canEditSubmission, canSeeSubmission, studentCurrentClassIds } from "@/lib/classes";
@@ -11,6 +11,8 @@ import { getSession } from "@/lib/session";
 import { statusOf, type InkEvent, type Stroke, type Submission } from "@/lib/types";
 
 export const runtime = "nodejs";
+// 응답 뒤 분석(OCR·다시 읽기·채점)이 끝날 때까지 함수를 살려 둔다 (Vercel)
+export const maxDuration = 300;
 
 // 학생 한 명의 풀이 기록 (교사 화면). ?studentId=
 //  - 지금 내 반 학생: 지난 학년 기록까지 전부 (지난 기록은 readOnly)
@@ -23,6 +25,8 @@ export async function GET(req: Request) {
   return NextResponse.json({
     student: student ?? { id: studentId, name: studentId },
     access: g.access.level,
+    // 이 학생의 반 (내 올해 반 우선, 없으면 예전 내 반): 학생 상세가 그 반 지표를 불러오게
+    classId: g.access.currentClassIds[0] ?? g.access.myClassIds[0] ?? null,
     // 목록에서는 무거운 필드 제외
     submissions: list
       .filter((s) => canSeeSubmission(g.access, s))
@@ -81,7 +85,8 @@ export async function POST(req: Request) {
     : undefined;
   await saveSubmission(submission, png, scratch);
 
-  // 응답은 바로 돌려주고 분석은 뒤에서 진행 (교사 화면에서 '분석 중' 표시)
-  void runPipeline(submission, png);
+  // 응답은 바로 돌려주고 분석은 뒤에서 진행 (교사 화면에서 '분석 중' 표시).
+  // after: 서버리스(Vercel)에서도 응답을 보낸 뒤 분석이 끝날 때까지 함수가 멈추지 않게
+  after(() => runPipeline(submission, png));
   return NextResponse.json({ id });
 }

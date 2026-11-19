@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import AnswerField from "@/components/AnswerField";
 import Chick from "@/components/Chick";
 import InkCanvas, { INK_COLORS, InkToolPill, type InkCanvasHandle, type InkTool } from "@/components/InkCanvas";
-import { ERROR_LABEL, formatDue, type AnalysisStatus, type ErrorType, type Problem, type Stroke } from "@/lib/types";
+import { ERROR_LABEL, formatDue, type AnalysisStatus, type ErrorType, type InkEvent, type Problem, type Stroke } from "@/lib/types";
 import LogoutButton from "@/components/LogoutButton";
 import { verdictOf as baseVerdict, type Verdict } from "@/lib/verdict";
 
@@ -73,7 +73,7 @@ export default function StudentApp({
   const [idx, setIdx] = useState(() => (results ? 0 : Math.max(0, PROBLEMS.findIndex((p) => !initialDone[p.id]))));
   const [sending, setSending] = useState(false);
   const [celebrate, setCelebrate] = useState(false);
-  const [startedAt, setStartedAt] = useState(() => Date.now());
+  const [startedAt, setStartedAt] = useState(() => Date.now()); // 지금 문항을 이번에 펼친 시각
   const [elapsed, setElapsed] = useState(0);
   const canvas = useRef<InkCanvasHandle>(null); // 정리 풀이 (AI 가 읽는 칸)
   const pad = useRef<InkCanvasHandle>(null); // 연습장 (AI 채점 안 함)
@@ -87,6 +87,13 @@ export default function StudentApp({
   // 문항별 풀이: 마지막으로 낸 풀이로 시작하고, 다른 문항으로 넘어갈 때 쓰던 풀이도 여기에 남겨 둔다
   const inkRef = useRef<Record<string, Stroke[]>>({ ...initialStrokes });
   const problem = PROBLEMS[idx];
+  // 문항별 풀이 기록: 다른 문항에 다녀와도 이어서 센다 (제출하면 그 문항은 새로 시작)
+  //  - firstStart: 제출 뒤 이 문항을 처음 펼친 시각 (서버에 startedAt 으로 보낸다)
+  //  - events: 쓰기·지우기 기록. 떠날 때 leave, 돌아올 때 return 을 넣어 그 사이는 풀이 시간·멈춤에서 뺀다
+  //  - spent: 앞서 펼쳐 둔 동안 쓴 시간 (화면의 ⏱ 표시용)
+  const firstStartRef = useRef<Record<string, number>>({ [PROBLEMS[idx].id]: startedAt });
+  const eventsRef = useRef<Record<string, InkEvent[]>>({});
+  const spentRef = useRef<Record<string, number>>({});
   // 답안 칸: 문항별로 기억하고, 이 기기에 자동 저장 (제출하면 지운다)
   const ansRef = useRef<Record<string, string>>({ ...initialAnswers });
   const [answer, setAnswer] = useState(() => ansRef.current[problem.id] ?? "");
@@ -146,21 +153,37 @@ export default function StudentApp({
   }, []);
 
   useEffect(() => {
-    const t = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    const spent = spentRef.current[problem.id] ?? 0;
+    const t = setInterval(() => setElapsed(Math.floor((spent + Date.now() - startedAt) / 1000)), 1000);
     return () => clearInterval(t);
-  }, [startedAt]);
+  }, [startedAt, problem.id]);
 
-  const goto = (i: number) => {
-    const cur = canvas.current?.getStrokes();
-    if (cur) inkRef.current[problem.id] = cur;
-    const sc = pad.current?.getStrokes();
-    if (sc) scratchRef.current[problem.id] = sc;
-    ansRef.current[problem.id] = answer;
+  // submitted: 방금 낸 문항을 떠남 → 그 문항의 기록은 비운다 (다시 풀면 새로 잰다)
+  const goto = (i: number, opts: { submitted?: boolean } = {}) => {
+    const now = Date.now();
+    const pid = problem.id;
+    if (opts.submitted) {
+      delete firstStartRef.current[pid];
+      delete eventsRef.current[pid];
+      delete spentRef.current[pid];
+    } else {
+      const cur = canvas.current?.getStrokes();
+      if (cur) inkRef.current[pid] = cur;
+      const sc = pad.current?.getStrokes();
+      if (sc) scratchRef.current[pid] = sc;
+      ansRef.current[pid] = answer;
+      eventsRef.current[pid] = [...(canvas.current?.getEvents() ?? []), { type: "leave", t: now }];
+      spentRef.current[pid] = (spentRef.current[pid] ?? 0) + (now - startedAt);
+    }
+    const next = PROBLEMS[i].id;
+    firstStartRef.current[next] ??= now;
+    const back = eventsRef.current[next];
     setIdx(i);
-    canvas.current?.reset(inkRef.current[PROBLEMS[i].id]);
-    pad.current?.reset(scratchRef.current[PROBLEMS[i].id]);
-    setAnswer(ansRef.current[PROBLEMS[i].id] ?? "");
-    setStartedAt(Date.now());
+    canvas.current?.reset(inkRef.current[next], back ? [...back, { type: "return", t: now }] : []);
+    pad.current?.reset(scratchRef.current[next]);
+    setAnswer(ansRef.current[next] ?? "");
+    setStartedAt(now);
+    setElapsed(Math.floor((spentRef.current[next] ?? 0) / 1000));
   };
 
   const nextUnsolved = (from: number) => {
@@ -184,7 +207,7 @@ export default function StudentApp({
       const res = await fetch("/api/submissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ problemId: problem.id, startedAt, submittedAt: Date.now(), ...data, answerText, scratch }),
+        body: JSON.stringify({ problemId: problem.id, startedAt: firstStartRef.current[problem.id] ?? startedAt, submittedAt: Date.now(), ...data, answerText, scratch }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "제출하지 못했어요.");
       setDone((d) => ({ ...d, [problem.id]: true }));
@@ -197,8 +220,18 @@ export default function StudentApp({
         localStorage.removeItem(scratchKey(problem.id));
       } catch {}
       const n = nextUnsolved(idx);
-      if (n !== null) goto(n);
-      else setCelebrate(true);
+      if (n !== null) goto(n, { submitted: true });
+      else {
+        // 이 문항에 남아 있으면 기록을 새로 시작한다 (다시 제출할 때 앞 풀이의 시간·지운 횟수가 섞이지 않게)
+        const now = Date.now();
+        firstStartRef.current[problem.id] = now;
+        delete eventsRef.current[problem.id];
+        delete spentRef.current[problem.id];
+        canvas.current?.reset(data.strokes);
+        setStartedAt(now);
+        setElapsed(0);
+        setCelebrate(true);
+      }
     } catch (e) {
       alert((e as Error).message);
     } finally {
