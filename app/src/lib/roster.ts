@@ -26,7 +26,7 @@ export async function getStudent(id: string): Promise<{ id: string; name: string
   return (await query<{ id: string; name: string }>(`SELECT id, name FROM students WHERE id = $1`, [id]))[0];
 }
 
-// 학생의 지금 학년 (가장 최근에 들어간 반 기준, 1~3 = 중1~중3, 4 = 고1). 반이 없으면 null
+// 학생의 지금 학년 (가장 최근에 들어간 반 기준, 1~3 = 중1~중3, 4 = 고1, 5 = 고2). 반이 없으면 null
 export async function getStudentGrade(id: string): Promise<number | null> {
   if (!/^[\w-]+$/.test(id)) return null;
   const rows = await query<{ grade: number }>(
