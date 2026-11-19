@@ -24,6 +24,8 @@ type Row = {
   class_archived?: boolean | null;
   teacher_names?: string | null;
   concept?: string | null;
+  problem_answer?: string | null;
+  vision_read?: boolean | null;
 };
 
 function toSubmission(r: Row): Submission {
@@ -38,7 +40,9 @@ function toSubmission(r: Row): Submission {
     strokes: r.strokes ?? [],
     events: r.events ?? [],
     ocrLines: r.ocr_lines ?? [],
-    ...(r.ocr_raw !== undefined && r.ocr_raw !== null ? { ocrRaw: r.ocr_raw } : {}),
+    ...unpackOcrRaw(r.ocr_raw),
+    ...(r.problem_answer ? { problemAnswer: r.problem_answer } : {}),
+    ...(r.vision_read ? { visionRead: true } : {}),
     status: r.status,
     ...(r.status_message ? { statusMessage: r.status_message } : {}),
     ...(r.analysis ? { analysis: r.analysis } : {}),
@@ -57,13 +61,27 @@ function toSubmission(r: Row): Submission {
   };
 }
 
+// ocr_raw 에는 OCR 원본 응답과 줄별 신뢰도를 { raw, confidences } 로 함께 넣는다 (스키마를 바꾸지 않고 신뢰도를 남기려고)
+// 옛 형식(원본 응답만)이면 그대로 ocrRaw 로 둔다
+function unpackOcrRaw(v: unknown): Pick<Submission, "ocrRaw" | "ocrConfidence"> {
+  if (v === undefined || v === null) return {};
+  if (typeof v === "object" && !Array.isArray(v) && "raw" in v && Array.isArray((v as { confidences?: unknown }).confidences)) {
+    const p = v as { raw: unknown; confidences: number[] };
+    return { ...(p.raw !== undefined && p.raw !== null ? { ocrRaw: p.raw } : {}), ocrConfidence: p.confidences };
+  }
+  return { ocrRaw: v };
+}
+const packOcrRaw = (raw: unknown, confidences: number[] | undefined) =>
+  confidences ? JSON.stringify({ raw: raw ?? null, confidences }) : json(raw);
+
 // 풀이 → 문항 → 과제 → 반: 어느 학년도·반 기록인지 같이 가져온다
 const WITH_ORIGIN = `
   FROM submissions s
   LEFT JOIN problems p ON p.id = s.problem_id
   LEFT JOIN assignments a ON a.id = p.assignment_id
   LEFT JOIN classes c ON c.id = a.class_id`;
-const ORIGIN_COLUMNS = `p.concept, a.class_id, c.name AS class_name, c.school_year, c.archived AS class_archived,
+const ORIGIN_COLUMNS = `p.concept, p.answer AS problem_answer,
+  COALESCE(s.ocr_raw -> 'pulibomVision', s.ocr_raw -> 'raw' -> 'pulibomVision') IS NOT NULL AS vision_read, a.class_id, c.name AS class_name, c.school_year, c.archived AS class_archived,
   (SELECT string_agg(t.name, ', ' ORDER BY t.name) FROM teacher_classes tc JOIN teachers t ON t.id = tc.teacher_id
     WHERE tc.class_id = a.class_id) AS teacher_names`;
 
@@ -87,7 +105,7 @@ export async function saveSubmission(s: Submission, png: Buffer | null) {
       JSON.stringify(s.events ?? []),
       png,
       s.ocrLines ?? [],
-      json(s.ocrRaw),
+      packOcrRaw(s.ocrRaw, s.ocrConfidence),
       s.status,
       s.statusMessage ?? null,
       json(s.analysis),
@@ -140,7 +158,6 @@ export async function latestStrokes(studentId: string, problemIds: string[]): Pr
 // 바뀐 항목만 UPDATE (분석 파이프라인과 교사 수정이 동시에 와도 서로 덮어쓰지 않게)
 const COLUMNS: Partial<Record<keyof Submission, [string, (v: unknown) => unknown]>> = {
   ocrLines: ["ocr_lines", (v) => v ?? []],
-  ocrRaw: ["ocr_raw", json],
   status: ["status", (v) => v],
   statusMessage: ["status_message", (v) => v ?? null],
   analysis: ["analysis", json],
@@ -151,6 +168,11 @@ export async function updateSubmission(id: string, patch: Partial<Submission>) {
   if (!isId(id)) return null;
   const sets: string[] = [];
   const values: unknown[] = [id];
+  // OCR 원본과 줄별 신뢰도는 ocr_raw 한 칸에 같이 쓴다
+  if ("ocrRaw" in patch || "ocrConfidence" in patch) {
+    values.push(packOcrRaw(patch.ocrRaw, patch.ocrConfidence));
+    sets.push(`ocr_raw = $${values.length}`);
+  }
   for (const [k, v] of Object.entries(patch) as [keyof Submission, unknown][]) {
     const col = COLUMNS[k];
     if (!col) continue;

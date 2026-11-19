@@ -1,10 +1,10 @@
 // 필기 인식(OCR) 정확도 테스트: DB 에 저장된 획을 지금 파이프라인으로 다시 읽고, 사람이 적어 둔 정답 줄과 비교한다.
 //   정답 라벨: data/ocrbench/labels.json  ([{ "id": 제출 id, "lines": ["2x=11-3", "2x=8", "x=4"] }], data/ 는 git 에 안 올라감)
-//   DB 에는 아무것도 쓰지 않는다 (Upstage OCR·Mathpix·Claude 만 호출).
+//   DB 에는 아무것도 쓰지 않는다 (Upstage OCR·Solar 만 호출).
 //
 //   npm run test:ocr            요약 + 틀린 풀이
 //   npm run test:ocr -- --all   맞은 풀이도 출력
-//   npm run test:ocr -- --no-vision   OCR 이 확신 없는 줄을 Mathpix → Claude 로 다시 읽는 단계 끄기 (비교용)
+//   npm run test:ocr -- --no-vision   OCR 이 확신 없는 줄을 Claude 로 다시 읽는 단계 끄기 (비교용)
 //   npm run test:ocr -- --vision=lines | --vision=full   다시 읽는 방식 (기본 .env VISION_MODE, 없으면 full)
 import { readFileSync } from "fs";
 import { correctOcr } from "../src/lib/ai";

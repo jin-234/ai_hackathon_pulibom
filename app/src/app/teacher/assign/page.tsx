@@ -1,4 +1,5 @@
 "use client";
+import QuestionText from "@/components/QuestionText";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AutoGrowTextarea } from "@/components/AutoGrowTextarea";
@@ -481,7 +482,7 @@ export default function AssignPage() {
                   {a.problems.map((p, i) => (
                     <li key={p.id} className="flex gap-2 rounded-xl bg-paper/80 px-3 py-1.5 text-sm leading-relaxed">
                       <span className="shrink-0 text-xs leading-6 text-muted">{i + 1}</span>
-                      <span className={`min-w-0 break-words ${p.free ? "" : "font-[family-name:var(--font-math)] italic"}`}>{p.question}</span>
+                      <span className={`min-w-0 break-words ${p.free ? "" : "font-[family-name:var(--font-math)] italic"}`}><QuestionText text={p.question} /></span>
                       {/* 설정한 정답 (비워 둔 일차방정식은 풀이기 정답). 누르면 고치기 */}
                       {answerEdit?.problemId === p.id ? (
                         <form

@@ -76,7 +76,7 @@ API 키는 **저장소 루트의 `.env`** 에서 읽습니다 (`../.env.example`
 
 ## 흐름
 
-제출 → `POST /api/submissions` → 필기 PNG·획 로그 저장 → **업스테이지 OCR**(획을 다시 그린 OCR 전용 이미지, 확신 없는 줄이 있으면 **Mathpix → Claude** 가 다시 읽음, 업스테이지 실패 시 원본 PNG 를 Mathpix → Claude 로) → **Claude 보정**(문항의 미지수에 맞춰 비슷한 글자 고치기) → **Claude 채점**(원본 이미지 + 코드 검산) → 교사 화면에 반영
+제출 → `POST /api/submissions` → 필기 PNG·획 로그 저장 → **업스테이지 OCR**(획을 다시 그린 OCR 전용 이미지, 확신 없는 줄이 있으면 **Mathpix → Claude** 가 다시 읽음, 빗금·지운 흔적은 획에서 찾아 뺌) → **Claude 보정**(문항의 미지수에 맞춰 비슷한 글자 고치기) → **Claude 채점**(코드 검산 + 빗금 표시, 실패하면 `오류`) → 교사 화면에 반영
 (분석 중 / 분석 완료 / 확인 필요 / 오류 상태 표시, OCR 이 이상하게 읽은 풀이는 `✎ 글씨체`)
 
 **채점·약점 분석** (`src/lib/pipeline.ts` → `ai.ts` → `summary.ts`)
@@ -126,7 +126,7 @@ OCR 전용 이미지  두 획으로 쓴 x(ɔc·ㄱL)를 반듯한 X 로 다시 �
 | `src/lib/ai.ts` | OCR 호출·보정(`correctOcr`), 채점 프롬프트(`analyzeSolution`, 오류 유형 기준 `ERROR_GUIDE`·설문 `TEACHER_PICKS`), 코드 검산 힌트(`checkLines`) (모델은 `.env` 로 교체) |
 | `src/lib/ocrImage.ts` | OCR 전용 이미지: 저장된 획을 다시 그려 인식률을 높임 (`sharp`), 두 획 x 를 반듯하게 다시 그리기. OCR 뒤 확신 없는 줄이 있으면 Mathpix → Claude 다시 읽기, 근거 이미지용 줄 위치(`lineBoxesOf`) |
 | `src/lib/vision.ts` | OCR 다시 읽기: 확신 없는 줄 고르기(`suspectLines`), 이미지 전체 다시 읽기(`readWhole`: Mathpix(키 있을 때) → Claude) / 줄만 잘라 다시 읽기(`rereadLines`, Claude). 모두 실패하면 OCR 결과 그대로 |
-| `src/lib/claude.ts` | Claude Code 헤드리스 호출(`claude -p --json-schema`, 구독 사용, `ANTHROPIC_API_KEY` 제거). 이미지는 임시 폴더에 저장해 Read 로 보게 함 |
+| `src/lib/claudeCli.ts` | Claude Code 헤드리스 호출(`claude -p --output-format json`, 구독 사용, `ANTHROPIC_API_KEY` 제거, MCP·세션 저장 끔, 180초). 이미지는 임시 폴더 파일 + Read 도구만 허용 |
 | `src/lib/pipeline.ts` | 제출 → OCR → 채점 흐름 (문항 미지수를 OCR·보정에 넘김) |
 | `src/lib/types.ts` | 공용 타입·오류 유형 이름, 미지수 찾기(`variableOf`), 글씨체 문제 판정(`handwritingIssue`) |
 | `src/lib/buildProblems.ts` | 교사가 직접 넣은 문항의 정답·해설 (x 외 미지수 y·a·b… 도) |

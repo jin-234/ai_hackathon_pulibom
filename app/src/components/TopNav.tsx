@@ -45,12 +45,16 @@ export default function TopNav({ role, userName }: { role?: Role; userName?: str
           <div className={`ml-auto flex items-center gap-2 ${role === "student" ? "sm:ml-0" : ""}`}>
             {role === "teacher" && (
               <>
-                <Link
-                  href="/teacher/assign"
-                  className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-semibold text-ink ${path.startsWith("/teacher/assign") ? "bg-honey" : "bg-honey-soft hover:bg-honey"}`}
-                >
-                  과제 출제
-                </Link>
+                {/* 과제 출제 화면에서는 같은 자리에 학생 현황(오늘의 교실)으로 돌아가는 버튼 */}
+                {path.startsWith("/teacher/assign") ? (
+                  <Link href="/teacher" className="whitespace-nowrap rounded-full bg-honey-soft px-4 py-1.5 text-sm font-semibold text-ink hover:bg-honey">
+                    학생 현황
+                  </Link>
+                ) : (
+                  <Link href="/teacher/assign" className="whitespace-nowrap rounded-full bg-honey-soft px-4 py-1.5 text-sm font-semibold text-ink hover:bg-honey">
+                    과제 출제
+                  </Link>
+                )}
                 <TeacherInbox />
               </>
             )}

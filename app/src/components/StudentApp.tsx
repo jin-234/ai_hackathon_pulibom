@@ -1,4 +1,5 @@
 "use client";
+import QuestionText from "@/components/QuestionText";
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -268,7 +269,7 @@ export default function StudentApp({
               problem.free ? "py-5 text-left text-base leading-relaxed" : "py-10 text-center font-[family-name:var(--font-math)] text-4xl"
             }`}
           >
-            {problem.question}
+            <QuestionText text={problem.question} />
           </div>
           {problem.concept && (
             <span className="w-fit rounded-full bg-sand px-3 py-1 text-xs text-muted">{problem.concept}</span>

@@ -1,4 +1,5 @@
 "use client";
+import QuestionText from "@/components/QuestionText";
 
 import { useEffect, useRef, useState } from "react";
 import AiSummary from "@/components/AiSummary";
@@ -6,6 +7,7 @@ import ConceptUnderstanding from "@/components/ConceptUnderstanding";
 import LearningProfileCard from "@/components/LearningProfileCard";
 import MessageThread from "@/components/MessageThread";
 import SupplementPanel from "@/components/SupplementPanel";
+import { solveLinear } from "@/lib/equation";
 import { getProblem } from "@/lib/problems";
 import { ERROR_LABEL, LOW_OCR_CONFIDENCE, handwritingIssue, hasHandwritingIssue, inkStats, type ClassStats, type ErrorType, type StudentStats, type Submission } from "@/lib/types";
 
@@ -157,7 +159,7 @@ export default function StudentDetail({
             >
               {label}
               {n > 0 && <span className="ml-1 text-xs opacity-70">{n}</span>}
-              {k === "subs" && needReview > 0 && <span className="ml-1.5 rounded-full bg-salmon-soft px-1.5 text-xs text-[#b5624f]">확인 {needReview}</span>}
+              {k === "subs" && needReview > 0 && <span className="ml-1.5 rounded-full bg-honey px-1.5 text-xs text-ink">확인 {needReview}</span>}
             </button>
           ))}
         </div>
@@ -194,7 +196,6 @@ export default function StudentDetail({
 
 // 풀이 기록: 항목(개념)별 맞음·틀림 수 → 항목을 누르면 그 문제 목록 → 문제를 누르면 원본·인식·AI 분석·선생님 확인이 펼쳐진다
 type Filter = SubFilter;
-const PAGE = 10;
 const resultOf = (s: Submission) =>
   s.status === "pending"
     ? { label: "분석 중", cls: "bg-honey-soft text-olive" }
@@ -218,7 +219,6 @@ function SubmissionList({
   const [filter, setFilter] = useState<Filter>(initialFilter);
   const [open, setOpen] = useState<string | null>(null);
   const [toggled, setToggled] = useState<Set<string>>(new Set()); // 펼침 기본값(필터에 따라)에서 바꾼 항목
-  const [more, setMore] = useState<Record<string, number>>({}); // 항목별로 더 보기로 늘린 개수
   const match = (s: Submission) =>
     filter === "all" ? true : filter === "wrong" ? s.analysis?.correct === false : s.status === "needs_review" && !s.teacher?.confirmedAt;
   const all = groups.flatMap((g) => g.items);
@@ -269,7 +269,9 @@ function SubmissionList({
               const wrong = c.items.filter((x) => x.analysis?.correct === false).length;
               const rest = c.items.length - correct - wrong;
               const review = c.items.filter((x) => x.status === "needs_review" && !x.teacher?.confirmedAt).length;
-              const limit = more[key] ?? PAGE;
+              // 번호 칸: 오래된 풀이부터 1번
+              const asc = [...c.items].sort((a, b) => a.submittedAt - b.submittedAt);
+              const openIdx = asc.findIndex((x) => x.id === open);
               return (
                 <div key={key} className={`rounded-2xl border ${isOpen ? "border-honey" : "border-line"} bg-paper`}>
                   <button
@@ -287,7 +289,7 @@ function SubmissionList({
                       <span className="rounded-full bg-sage-soft px-2 py-0.5 font-semibold text-[#5d7a50]">맞음 {correct}</span>
                       <span className={`rounded-full px-2 py-0.5 font-semibold ${wrong ? "bg-salmon-soft text-[#b5624f]" : "bg-sand text-muted"}`}>틀림 {wrong}</span>
                       {rest > 0 && <span className="rounded-full bg-sand px-2 py-0.5 text-muted">기타 {rest}</span>}
-                      {review > 0 && <span className="rounded-full bg-salmon-soft px-2 py-0.5 text-[#b5624f]">확인 {review}</span>}
+                      {review > 0 && <span className="rounded-full bg-honey px-2 py-0.5 text-ink">확인 {review}</span>}
                     </span>
                     {/* 맞음·틀림 비율 막대 */}
                     <span className="flex h-1.5 w-16 overflow-hidden rounded-full bg-sand" aria-hidden>
@@ -297,52 +299,68 @@ function SubmissionList({
                     <span className="text-xs text-muted">{isOpen ? "▲" : "▼"}</span>
                   </button>
                   {isOpen && (
-                    <div className="flex flex-col gap-1.5 border-t border-line p-2">
-                      {c.items.slice(0, limit).map((s) => {
-                        const r = resultOf(s);
-                        const err = s.teacher?.errorType ?? s.analysis?.errorType;
-                        const subOpen = open === s.id;
-                        return (
-                          <div key={s.id} className={`rounded-xl border ${subOpen ? "border-honey" : "border-line/70"} bg-paper`}>
+                    <div className="border-t border-line p-3">
+                      <div className="flex flex-wrap gap-1.5">
+                        {asc.map((x, i) => {
+                          const r = resultOf(x);
+                          const needs = x.status === "needs_review" && !x.teacher?.confirmedAt;
+                          const tone =
+                            x.analysis?.correct === true && x.status !== "pending"
+                              ? "border-sage/40 bg-sage-soft text-[#5d7a50]"
+                              : x.analysis?.correct === false && x.status !== "pending"
+                                ? "border-[#b5624f]/30 bg-salmon-soft text-[#b5624f]"
+                                : "border-line bg-sand text-muted";
+                          return (
                             <button
-                              onClick={() => setOpen(subOpen ? null : s.id)}
-                              aria-expanded={subOpen}
-                              className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-left text-sm hover:bg-cream/60"
+                              key={x.id}
+                              onClick={() => setOpen(open === x.id ? null : x.id)}
+                              aria-pressed={open === x.id}
+                              title={`${i + 1}번 · ${r.label} · ${x.question ?? getProblem(x.problemId)?.question ?? ""}${needs ? " · 확인 필요" : ""}`}
+                              className={`relative grid h-8 min-w-8 place-items-center rounded-lg border px-1.5 text-xs font-semibold tabular-nums transition hover:brightness-95 ${tone} ${open === x.id ? "ring-2 ring-honey-deep" : ""}`}
                             >
-                              <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${r.cls}`}>{r.label}</span>
-                              <span className="min-w-0 flex-1 truncate">{s.question ?? getProblem(s.problemId)?.question}</span>
-                              {s.analysis?.correct === false && err && err !== "NONE" && <span className="text-xs text-[#b5624f]">{ERROR_LABEL[err]}</span>}
-                              {hasHandwritingIssue(s) && (
-                                <span className="rounded-full bg-honey-soft px-2 py-0.5 text-xs text-olive" title="OCR이 이 풀이를 이상하게 읽었어요. 원본 풀이와 비교해 주세요.">
-                                  ✎ 글씨체
-                                </span>
-                              )}
-                              {s.teacher?.confirmedAt ? (
-                                <span className="text-xs text-[#5d7a50]">✓ 확인함</span>
-                              ) : s.status === "needs_review" ? (
-                                <span className="rounded-full bg-salmon-soft px-2 py-0.5 text-xs text-[#b5624f]">확인 필요</span>
-                              ) : null}
-                              <span className="text-xs text-muted">
-                                {new Date(s.submittedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                              </span>
-                              <span className="text-xs text-muted">{subOpen ? "▲" : "▼"}</span>
+                              {i + 1}
+                              {needs && <span aria-label="확인 필요" className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border border-paper bg-honey-deep" />}
                             </button>
-                            {subOpen && (
-                              <div className="border-t border-line p-3">
-                                <SubmissionCard s={s} onUpdate={onUpdate} />
+                          );
+                        })}
+                      </div>
+                      {openIdx >= 0 &&
+                        (() => {
+                          const x = asc[openIdx];
+                          const r = resultOf(x);
+                          const err = x.teacher?.errorType ?? x.analysis?.errorType;
+                          return (
+                            <div className="mt-3 rounded-xl border border-honey bg-paper">
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-3 py-2 text-sm">
+                                <b className="tabular-nums">{openIdx + 1}번</b>
+                                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${r.cls}`}>{r.label}</span>
+                                <span className="min-w-0 flex-1 truncate">
+                                  <QuestionText text={x.question ?? getProblem(x.problemId)?.question ?? ""} />
+                                </span>
+                                {x.analysis?.correct === false && err && err !== "NONE" && <span className="text-xs text-[#b5624f]">{ERROR_LABEL[err]}</span>}
+                                {hasHandwritingIssue(x) && (
+                                  <span className="rounded-full bg-honey-soft px-2 py-0.5 text-xs text-olive" title="OCR·AI 모두 이 풀이를 제대로 읽지 못했어요. 원본 풀이와 비교해 주세요.">
+                                    ✎ 글씨체
+                                  </span>
+                                )}
+                                {x.teacher?.confirmedAt ? (
+                                  <span className="text-xs text-[#5d7a50]">✓ 확인함</span>
+                                ) : x.status === "needs_review" ? (
+                                  <span className="rounded-full bg-honey px-2 py-0.5 text-xs text-ink">확인 필요</span>
+                                ) : null}
+                                <span className="text-xs text-muted">
+                                  {new Date(x.submittedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                </span>
+                                <button onClick={() => setOpen(null)} aria-label="닫기" className="text-xs text-muted hover:text-ink">
+                                  ✕
+                                </button>
                               </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                      {c.items.length > limit && (
-                        <button
-                          onClick={() => setMore((m) => ({ ...m, [key]: limit + PAGE * 2 }))}
-                          className="self-center rounded-full border border-line px-4 py-1 text-xs text-muted hover:bg-sand"
-                        >
-                          {c.items.length - limit}개 더 보기
-                        </button>
-                      )}
+                              <div className="p-3">
+                                <SubmissionCard s={x} onUpdate={onUpdate} />
+                              </div>
+                            </div>
+                          );
+                        })()}
                     </div>
                   )}
                 </div>
@@ -391,10 +409,22 @@ function groupByOrigin(subs: Submission[]) {
   return [...map.values()].sort((a, b) => b.year - a.year);
 }
 
+// 정답: 선생님이 정한 문항 정답 → 기본 시연 문항 정답 → 풀이기로 푼 정답 (안 풀리면 없음)
+function answerOf(s: Submission) {
+  if (s.problemAnswer?.trim()) return s.problemAnswer.trim();
+  const p = getProblem(s.problemId);
+  if (p?.answer) return p.answer;
+  try {
+    return s.question ? solveLinear(s.question).answer : "";
+  } catch {
+    return "";
+  }
+}
+
 const STATUS: Record<Submission["status"], { label: string; cls: string }> = {
   pending: { label: "분석 중", cls: "bg-honey-soft text-olive" },
   done: { label: "분석 완료", cls: "bg-sage-soft text-[#5d7a50]" },
-  needs_review: { label: "확인 필요", cls: "bg-salmon-soft text-[#b5624f]" },
+  needs_review: { label: "확인 필요", cls: "bg-honey text-ink" },
   error: { label: "오류", cls: "bg-sand text-ink" },
 };
 
@@ -446,7 +476,7 @@ export function SubmissionCard({
     <div className="grid gap-4 @2xl:grid-cols-2">
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
-          <span className="font-semibold">{s.question ?? problem?.question}</span>
+          <QuestionText text={s.question ?? problem?.question ?? ""} className="font-semibold" />
           {confirmed && s.status !== "pending" ? (
             <span className="rounded-full bg-sage px-2 py-0.5 text-xs text-white">✓ 확인함</span>
           ) : (
@@ -464,6 +494,25 @@ export function SubmissionCard({
             </button>
           )}
         </div>
+        {/* 정답 · 학생 답 */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-xl border border-sage/40 bg-sage-soft px-3 py-2">
+            <div className="text-xs text-muted">정답</div>
+            <div className="break-words text-lg font-bold text-[#5d7a50]">{answerOf(s) || "없음"}</div>
+          </div>
+          <div
+            className={`rounded-xl border px-3 py-2 ${
+              a?.correct === true ? "border-sage/40 bg-sage-soft" : a?.correct === false ? "border-[#b5624f]/30 bg-salmon-soft" : "border-line bg-sand"
+            }`}
+          >
+            <div className="text-xs text-muted">
+              학생 답{a?.correct === true ? " · 맞음" : a?.correct === false ? " · 틀림" : ""}
+            </div>
+            <div className={`break-words text-lg font-bold ${a?.correct === true ? "text-[#5d7a50]" : a?.correct === false ? "text-[#b5624f]" : "text-ink"}`}>
+              {a?.recognizedAnswer ?? (s.status === "pending" ? "인식 중" : "-")}
+            </div>
+          </div>
+        </div>
         {imageMissing ? (
           <div className="rounded-xl border border-dashed border-line p-6 text-center text-xs text-muted">원본 풀이 이미지가 없어요.</div>
         ) : (
@@ -476,7 +525,7 @@ export function SubmissionCard({
           />
         )}
         <div className="text-xs text-muted">
-          답 <b>{a?.recognizedAnswer ?? (s.status === "pending" ? "인식 중" : "-")}</b> · {stats.durationSec}초 · 지움 {stats.erases}회
+          {stats.durationSec}초 · 지움 {stats.erases}회
           {stats.idleSec > 0 && ` · 멈춤 ${stats.idleSec}초`}
           {stats.hiddenCount > 0 && ` · 화면 이탈 ${stats.hiddenCount}회`}
         </div>
@@ -520,10 +569,14 @@ export function SubmissionCard({
         {s.status === "error" && <div className="rounded-xl bg-sand p-3 text-muted">{s.statusMessage}</div>}
 
         {a && (
-          <div className="flex flex-col gap-2 rounded-xl bg-honey-soft p-3">
+          <div
+            className={`flex flex-col gap-2 rounded-xl border p-3 ${
+              a.correct === true ? "border-sage/40 bg-sage-soft" : a.correct === false ? "border-[#b5624f]/30 bg-salmon-soft" : "border-transparent bg-honey-soft"
+            }`}
+          >
             <div className="text-xs font-semibold text-muted">AI 분석</div>
             <div>
-              <b>{a.correct === null ? "판정 보류" : a.correct ? "정답" : "오답"}</b> · {ERROR_LABEL[a.errorType]} · {a.concept}
+              <b className={a.correct === true ? "text-[#5d7a50]" : a.correct === false ? "text-[#b5624f]" : ""}>{a.correct === null ? "판정 보류" : a.correct ? "정답" : "오답"}</b> · {ERROR_LABEL[a.errorType]} · {a.concept}
             </div>
             <div><span className="text-muted">근거</span> {a.reason}</div>
             <div><span className="text-muted">지도 제안</span> {a.suggestion}</div>

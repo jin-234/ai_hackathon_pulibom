@@ -59,14 +59,13 @@
 
 **지금 구현 (2026-11-19)**: EXAONE 4.5(이미지 입력)는 무료 호스팅 API 가 없고 33B 라 16GB 맥에서 못 돌려 보류.
 손글씨는 **업스테이지 OCR** 로 읽고, 확신 없는 줄이 있으면 **Mathpix → Claude** 순서로 다시 읽는다.
-OCR 보정·풀이 분석(채점)은 **Claude Code 헤드리스**(`claude -p`, API 키 없이 구독 결제분 사용)가 원본 풀이 이미지까지 직접 보고 한다.
+OCR 보정·풀이 분석(채점)은 **Claude Code 헤드리스**(`claude -p`, API 키 없이 구독 결제분 사용)가 한다. Claude 가 실패해도 Solar 로 대신하지 않는다 (그 풀이는 `오류` → `다시 분석`).
+약분 빗금·줄을 그어 지운 흔적은 획에서 찾아 OCR 이미지에서 빼고 채점 AI 에게 알려 준다 (재현 프롬프트 v4 기준).
 
 ```
 필기 획 ─▶ OCR 전용 이미지 ─▶ 업스테이지 OCR ─┬─(확신 없는 줄이 있으면)─▶ Mathpix ─(그래도 이상하면)─▶ Claude: 이미지 전체를 다시 읽음 ─┐
-               (업스테이지 실패·키 없음 ─────┘                                                                                   │
-                → 원본 PNG 를 Mathpix → Claude 로)                                                                                │
                                            └───────────────────────────────────────────────────────────────────────────┴─▶ Claude 보정 ─▶ Claude 채점 ─▶ Solar 학생 요약 ─▶ 교사 대시보드
-                                                                                                                          (미지수에 맞춰)  (+코드 검산·원본 이미지) (+코드 집계·근거 확인)
+                                                                                                                          (미지수에 맞춰)  (+코드 검산·빗금 표시) (+코드 집계·근거 확인)
 ```
 
 - Mathpix 키(`MATHPIX_APP_ID`·`MATHPIX_APP_KEY`)가 없으면 Mathpix 는 건너뛰고 바로 Claude
@@ -152,7 +151,7 @@ DATABASE_URL=postgresql://postgres.<프로젝트ID>:<비밀번호>@aws-0-ap-nort
 - 주소에 `pooler.supabase.com` 과 `ap-northeast-2` 가 들어 있어야 함 (Direct connection 주소 `db.<ID>.supabase.co` 는 쓰지 않음)
 - `=` 앞뒤에 띄어쓰기·따옴표 넣지 않기
 - (선택) `MATHPIX_APP_ID=`·`MATHPIX_APP_KEY=` 를 채우면 OCR 이 못 읽은 풀이를 Mathpix 가 먼저 다시 읽음. 비워 두면 바로 Claude 가 읽음
-- **Claude**: 터미널에서 `claude` 가 로그인돼 있어야 함 (API 키 필요 없음). PATH 에 없으면 `CLAUDE_BIN=` 에 전체 경로
+- **Claude**: 터미널에서 `claude` 가 로그인돼 있어야 함 (API 키 필요 없음). PATH 에 없으면 `CLAUDE_CLI=` 에 전체 경로. 모델은 `GRADING_MODEL`·`VISION_MODEL` (기본 sonnet)
 
 **③ 설치하고 연결 확인**
 

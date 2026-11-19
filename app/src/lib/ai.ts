@@ -2,14 +2,13 @@ import type { Analysis, ErrorType, Problem } from "./types";
 import { ERROR_LABEL, LOW_OCR_CONFIDENCE, variableOf } from "./types";
 
 export { variableOf };
-import { CLAUDE_MODEL, imageNote, runClaude } from "./claude";
+import { runClaude } from "./claudeCli";
 import { env } from "./env";
 import { linearForm, solveLinear } from "./equation";
 
-// AI 호출 모음.
-//   - OCR: 업스테이지 Document OCR (runOcr). 확신 없는 줄은 vision.ts 가 Mathpix → Claude 로 다시 읽는다.
-//   - OCR 보정·풀이 분석: Claude Code 헤드리스 (claude.ts, 구독 결제분 사용)
-//   - 학생 요약·보충 문항·소단원 문항 생성(chat): ANALYSIS_BASE_URL / ANALYSIS_MODEL (기본 Solar Pro 4)
+// AI 호출 모음. 모델은 .env 로 교체 가능하게 둔다.
+//   ANALYSIS_BASE_URL / ANALYSIS_MODEL / ANALYSIS_API_KEY 를 바꾸면
+//   OpenAI 호환 서버(예: 나중에 vLLM으로 띄운 EXAONE 4.5)로 바로 교체된다.
 
 const UPSTAGE_KEY = () => env("UPSTAGE_API_KEY") ?? "";
 const OCR_URL = () => env("UPSTAGE_OCR_URL") ?? "https://api.upstage.ai/v1/document-digitization";
@@ -195,11 +194,9 @@ ${
     )
     .join("\n")}`;
   try {
-    const parsed = await runClaude<{ lines?: unknown[] }>({
-      system,
-      prompt: user,
-      schema: { type: "object", properties: { lines: { type: "array", items: { type: "string" } } }, required: ["lines"] },
-    });
+    // 제출 채점 경로는 Claude 만 쓴다 (Solar 안 씀)
+    const text = await runClaude(`${user}\n\n다른 말 없이 JSON만 출력한다.`, { model: GRADING_CLAUDE_MODEL(), system });
+    const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}") as { lines?: unknown[] };
     const lines = Array.isArray(parsed.lines) ? parsed.lines.map((l) => normalizeMath(String(l), v)) : [];
     if (lines.length !== ocrLines.length) return ocrLines;
     // 안전장치: AI가 학생 풀이를 '맞게' 고쳐 버리는 것을 코드로 막는다
@@ -327,29 +324,13 @@ export const TEACHER_PICKS: { type: ErrorType; name: string; picked: number }[] 
 ];
 const PICK_TYPES = new Set(TEACHER_PICKS.map((p) => p.type));
 
-// 풀이 분석 응답 형식 (Claude --json-schema 로 강제)
-const ANALYSIS_SCHEMA = {
-  type: "object",
-  properties: {
-    recognizedAnswer: { type: ["string", "null"] },
-    correct: { type: ["boolean", "null"] },
-    firstErrorLine: { type: ["integer", "null"] },
-    errorType: { type: "string", enum: Object.keys(ERROR_LABEL) },
-    concept: { type: "string" },
-    reason: { type: "string" },
-    suggestion: { type: "string" },
-    needsReview: { type: "boolean" },
-  },
-  required: ["recognizedAnswer", "correct", "firstErrorLine", "errorType", "concept", "reason", "suggestion", "needsReview"],
-};
-
-// ③ Claude 헤드리스: 문제·정답·해설 + OCR 결과(+ 원본 풀이 이미지) → 풀이 읽기 → 오류 위치 → 채점 → 오류 유형 분류 (JSON)
+// ③ Solar Pro: 문제·정답·해설 + OCR 결과 → 풀이 읽기 → 오류 위치 → 채점 → 오류 유형 분류 (JSON)
 export async function analyzeSolution(input: {
   problem: Problem;
-  png?: Buffer; // OCR 전용 이미지 (있으면 Claude 가 직접 보고 OCR 오인식을 걸러 낸다)
   ocrLines: string[];
   ocrConfidence?: number[];
   ocrFractions?: number[];
+  ocrMarks?: { line: number | null; kind: "cancel" | "strike" }[]; // 획에서 찾은 빗금 (약분 표시 · 줄을 그어 지운 흔적)
   durationSec: number;
   erases: number;
 }): Promise<Analysis> {
@@ -387,7 +368,8 @@ ${codes}
 5단계 근거 쓰기: reason 에 틀린 식을 인용하고 "무엇을 무엇으로 잘못 바꿨는지"를 구체적으로 쓴다 (예: "2x + 3 = 11 에서 3 을 이항할 때 부호를 바꾸지 않아 2x = 11 + 3 이 됐다").
 
 아래 풀이는 OCR 결과를 글자 모양 기준으로 보정한 것이다. 보정이 틀렸을 수 있으니 이상하면 needsReview=true.
-원본 풀이 이미지가 주어지면 직접 보고, 보정된 식과 이미지가 다르면 이미지를 기준으로 판단한다 (이때 줄 번호는 아래 목록 기준을 그대로 쓴다).
+
+아래 풀이는 OCR 결과를 글자 모양 기준으로 보정한 것이다. 보정이 틀렸을 수 있으니 이상하면 needsReview=true.
 학생은 답을 따로 입력하지 않고 풀이 마지막에 답(예: x = 4, 계산 결과 -7/12, 간단히 한 식 3x+4, 넓이 20)을 쓴다.
 식이 아닌 계산·값 구하기 문항(혼합 계산, 소수, 비율, 넓이 등)도 나온다. 단위(cm², %)를 빼고 써도 값이 같으면 정답이다. 풀이에서 최종 답을 직접 찾아 정답과 비교한다.
 값이 같으면 정답이다 (약분 전 분수·대분수·항의 순서만 다른 식 포함). 약분하지 않은 것은 정답으로 두되 suggestion 에 적는다.
@@ -417,18 +399,17 @@ ${problem.solution.length ? problem.solution.map((s, i) => `${i + 1}. ${s}`).joi
 [관련 개념] ${problem.concept || "(미지정)"}
 
 [학생 풀이 (줄 번호: 보정된 식  /  OCR 원문)]
-${ocrLines.length ? ocrLines.map((l, i) => `${i}: ${correctedLines[i]}  /  ${l}${lowConf[i] ? "  [인식 불확실]" : ""}${checks[i] ? `  ${checks[i]}` : ""}`).join("\n") : "(인식된 내용 없음)"}
+${ocrLines.length ? ocrLines.map((l, i) => `${i}: ${correctedLines[i]}  /  ${l}${lowConf[i] ? "  [인식 불확실]" : ""}${markNote(input.ocrMarks, i)}${checks[i] ? `  ${checks[i]}` : ""}`).join("\n") : "(인식된 내용 없음)"}${markSummary(input.ocrMarks)}
 ${ocrLines.length ? `[학생이 답으로 쓴 마지막 줄] ${correctedLines[ocrLines.length - 1]}  (이 줄에 쓰인 값 전체가 학생의 답이다. 이 중 일부만 골라서 채점하지 않는다)\n` : ""}[풀이 시간] ${durationSec}초, [지운 횟수] ${erases}회 (참고용, 이것만으로 이해도를 판단하지 말 것)
 
-${input.png ? imageNote(1).trim() + " (학생 원본 풀이)\n\n" : ""}다음 형식의 JSON으로 답하라:
+다음 형식의 JSON으로 답하라:
 {"recognizedAnswer": "풀이에서 찾은 최종 답 (예: x=4) 또는 null", "correct": true|false|null, "firstErrorLine": 줄번호 또는 null, "errorType": "4단계에서 고른 코드", "concept": "관련 개념", "reason": "어디서 무엇을 잘못했는지 (틀린 식 인용, 2문장 이내)", "suggestion": "교사가 학생에게 해볼 확인 질문 또는 보충 지도 방향 (2문장 이내)", "needsReview": true|false}`;
 
-  const parsed = await runClaude<Partial<Analysis>>({
-    system,
-    prompt: user,
-    schema: ANALYSIS_SCHEMA,
-    images: input.png ? [input.png] : [],
-  });
+  // 채점 모델: 이 컴퓨터의 Claude Code 헤드리스(claude -p, 구독). Solar 로 대신 채점하지 않는다
+  const { text, model: usedModel } = await gradeCall(system, user);
+  const json = text.match(/\{[\s\S]*\}/)?.[0];
+  if (!json) throw new Error(`분석 결과에서 JSON을 찾지 못함: ${text.slice(0, 200)}`);
+  const parsed = JSON.parse(json) as Partial<Analysis>;
   const errorType = (parsed.errorType && parsed.errorType in ERROR_LABEL ? parsed.errorType : "UNREADABLE") as ErrorType;
   const firstErrorLine = typeof parsed.firstErrorLine === "number" ? parsed.firstErrorLine : null;
   return {
@@ -448,6 +429,41 @@ ${input.png ? imageNote(1).trim() + " (학생 원본 풀이)\n\n" : ""}다음 �
       // 오류로 지목한 줄이나 답 줄을 OCR이 확신 없이 읽었으면 교사 확인으로 돌린다
       (firstErrorLine !== null && Boolean(lowConf[firstErrorLine])) ||
       Boolean(lowConf[ocrLines.length - 1]),
-    model: `claude(${CLAUDE_MODEL()})`,
+    model: usedModel,
   };
+}
+
+// 빗금 안내: 약분 표시는 빗금 친 수끼리 약분한 것(그 줄의 식은 약분 전 모습), 지운 흔적은 그어 지운 부분을 이미 뺀 것
+function markNote(marks: AnalyzeMarks, i: number) {
+  const here = (marks ?? []).filter((m) => m.line === i);
+  if (!here.length) return "";
+  const cancel = here.filter((m) => m.kind === "cancel").length;
+  const strike = here.length - cancel;
+  return [
+    cancel ? `  [약분 표시: 이 줄의 수 위에 빗금 ${cancel}개. 학생이 빗금 친 수끼리 약분한 것이니, 식은 약분 전 모습이다]` : "",
+    strike ? `  [지운 흔적: 이 줄에서 학생이 줄을 그어 지운 부분은 이미 뺐다]` : "",
+  ].join("");
+}
+function markSummary(marks: AnalyzeMarks) {
+  const unknown = (marks ?? []).filter((m) => m.line === null);
+  if (!unknown.length) return "";
+  const cancel = unknown.filter((m) => m.kind === "cancel").length;
+  return `\n[풀이 어딘가에 ${cancel ? `약분 빗금 ${cancel}개` : ""}${cancel && unknown.length > cancel ? ", " : ""}${unknown.length > cancel ? `줄을 그어 지운 흔적 ${unknown.length - cancel}개` : ""}가 있다. 약분은 학생이 약분한 것, 지운 부분은 이미 뺐다]`;
+}
+type AnalyzeMarks = { line: number | null; kind: "cancel" | "strike" }[] | undefined;
+
+// 채점 모델: Claude Code 헤드리스만 쓴다 (GRADING_MODEL, 기본 sonnet).
+//   실패하면(claude 없음·로그인 만료·한도·시간 초과·JSON 아님) 오류를 던져 그 풀이는 '오류' 상태가 된다 → 교사가 '다시 분석'
+const GRADING_CLAUDE_MODEL = () => env("GRADING_MODEL") ?? "sonnet";
+
+async function gradeCall(system: string, user: string): Promise<{ text: string; model: string }> {
+  const model = GRADING_CLAUDE_MODEL();
+  let text: string;
+  try {
+    text = await runClaude(`${user}\n\n다른 말 없이 JSON만 출력한다.`, { model, system });
+  } catch (e) {
+    throw new Error(`Claude 채점 실패: ${(e as Error).message.slice(0, 200)} (이 컴퓨터에 Claude Code 가 설치·로그인돼 있는지 확인해 주세요)`);
+  }
+  if (!/\{[\s\S]*\}/.test(text)) throw new Error(`Claude 채점 결과에서 JSON을 찾지 못함: ${text.slice(0, 200)}`);
+  return { text, model: `claude-cli:${model}` };
 }
