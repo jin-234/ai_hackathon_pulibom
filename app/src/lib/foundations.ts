@@ -38,6 +38,7 @@ const BY_ERROR: Partial<Record<ErrorType, number>> = {
   EXPR_MEANING: 2,
   TRANSPOSE: 4,
   DIVIDE: 4,
+  FACTOR: 3,
 };
 
 // 오류 유형으로 정해지지 않으면(공식·개념 적용 등) 문항의 개념·문제 글로. 앞에 있는 것부터 본다
@@ -56,8 +57,11 @@ const BY_CONCEPT: [RegExp, number][] = [
 ];
 
 // 틀린 풀이 하나 → 다시 봐야 할 중학 기초 테마 (없으면 null)
-export function foundationOf(errorType: ErrorType | undefined, conceptText: string): FoundationTheme | null {
+//  stepConcept: 채점 때 AI 가 남긴 '틀린 단계의 개념' (예: '인수분해'). 있고 테마가 분명하면 그것을 먼저 쓴다
+export function foundationOf(errorType: ErrorType | undefined, conceptText: string, stepConcept?: string): FoundationTheme | null {
   if (!errorType || NOT_FOUNDATION.includes(errorType)) return null;
+  const byStep = stepConcept ? BY_CONCEPT.find(([re]) => re.test(stepConcept)) : undefined;
+  if (byStep) return theme(byStep[1]);
   const byError = BY_ERROR[errorType];
   if (byError) {
     // 부등식 문항에서 이항·양변 나누기를 틀렸으면 (음수로 나눌 때 부등호 방향 등) 방정식이 아니라 부등식

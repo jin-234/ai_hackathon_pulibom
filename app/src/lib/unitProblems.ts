@@ -65,7 +65,16 @@ function spread<T>(xs: T[], n: number) {
   return Array.from({ length: n }, (_, i) => xs[Math.round((i * (xs.length - 1)) / (n - 1))]);
 }
 
-async function fromAi(grade: number, unitName: string, lessonName: string, desc: string, count: number): Promise<UnitItem[]> {
+// 보충 문항: 학생이 풀이에서 틀린 단계의 개념(예: 이차방정식을 풀다 틀린 인수분해) 위주로. 소단원 출제와 같은 검산을 거친다
+//  basis: 학생의 오답 풀이 (문항 : 풀이 줄 (채점 근거)). 학생 이름은 넣지 않는다
+export async function draftConceptProblems(opts: { grade: number; concept: string; basis: string[]; count: number }): Promise<UnitItem[]> {
+  const focus = `[학생이 틀린 풀이]
+${opts.basis.join("\n") || "(없음)"}
+이 학생은 위 풀이에서 '${opts.concept}' 단계를 틀렸다. 보충 문항이니 문제 전체가 '${opts.concept}' 를 직접 연습하는 문항이어야 한다 (예: 이차방정식을 풀다 인수분해를 틀렸으면 "다음 식을 인수분해하시오" 문항). 학생이 틀린 것과 같은 함정(부호, 계수, 빠뜨린 항 등)이 들어가게 만들고, 틀린 문항을 숫자만 바꿔 그대로 내지는 않는다.`;
+  return fromAi(opts.grade, "보충 학습", opts.concept, `학생이 풀이에서 틀린 '${opts.concept}' 단계`, opts.count, focus);
+}
+
+async function fromAi(grade: number, unitName: string, lessonName: string, desc: string, count: number, focus = ""): Promise<UnitItem[]> {
   // 버린 문항 때문에 모자라면 한 번 더 만든다 (최대 2번)
   const items: UnitItem[] = [];
   const seen = new Set<string>();
@@ -74,7 +83,7 @@ async function fromAi(grade: number, unitName: string, lessonName: string, desc:
   for (let round = 0; round < 2; round++) {
     let got: UnitItem[];
     try {
-      got = await aiRound(grade, unitName, lessonName, desc, count, seen, round > 0);
+      got = await aiRound(grade, unitName, lessonName, desc, count, seen, round > 0, focus);
     } catch (e) {
       failed = e as Error;
       continue;
@@ -91,7 +100,7 @@ async function fromAi(grade: number, unitName: string, lessonName: string, desc:
     .sort((a, b) => items.indexOf(a) - items.indexOf(b));
 }
 
-async function aiRound(grade: number, unitName: string, lessonName: string, desc: string, count: number, seen: Set<string>, retry: boolean): Promise<UnitItem[]> {
+async function aiRound(grade: number, unitName: string, lessonName: string, desc: string, count: number, seen: Set<string>, retry: boolean, focus = ""): Promise<UnitItem[]> {
   const notYet = NOT_YET[grade] ?? "";
   const system = `너는 ${gradeName(grade)} 수학 교사를 돕는 출제 도우미다. 2022 개정 교육과정 범위 안에서 학생이 손으로 풀이를 쓰는 과제 문항을 만든다.
 규칙:
@@ -115,7 +124,7 @@ async function aiRound(grade: number, unitName: string, lessonName: string, desc
 - JSON만 출력: {"items": [{"question": "...", "answer": "...", "solution": ["...", "..."], "checks": ["..."]}]}`;
   const user = `[학년] ${gradeName(grade)}
 [단원] ${unitName} > ${lessonName}
-[학습 내용] ${desc}
+[학습 내용] ${desc}${focus ? `\n${focus}` : ""}
 문항 ${count + 2}개를 만들어라.${retry ? "\n앞에서 만든 문항과 겹치지 않게, 조건이 모순되지 않고 학년 범위 안인 문항만." : ""}`;
   let parsed: { items?: { question?: unknown; answer?: unknown; solution?: unknown; checks?: unknown }[] };
   try {
