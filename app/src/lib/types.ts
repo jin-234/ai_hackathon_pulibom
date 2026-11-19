@@ -309,7 +309,7 @@ export type StudentStats = {
   lastSubmittedAt: number | null; // 마지막으로 제출한 시각 (ms)
   assignmentsDone?: number; // 받은 과제 중 문항을 다 낸 과제 수 (제출 현황)
   assignmentsTotal?: number; // 받은 과제 수
-  // stage: 그 개념의 학교 과정 (학생 상세에서 초등·중등·고등으로 나눠 보여 준다)
+  // stage: 그 개념의 학교 과정 (학생 상세에서 중등·고등으로 나눠 보여 준다)
   conceptHistory: { concept: string; before: number; after: number | null; n: number; stage: SchoolStage }[];
 };
 
