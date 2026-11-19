@@ -2,7 +2,9 @@ import SwiftUI
 
 enum ServerAddress {
     // 배포된 풀이봄 (Vercel). 처음 켤 때 기본 주소
-    static let deployed = "https://pulibom.vercel.app"
+    static let deployed = "https://pulibom-three.vercel.app"
+    // 예전에 쓰던 개인 배포 주소 (팀 사이트로 옮겨 준다)
+    static let oldDeployed = "https://pulibom.vercel.app"
 
     // "192.168.0.10:3000" 처럼 http:// 없이 넣어도 되게 (맥 IP·localhost 는 http, 도메인은 https)
     static func normalize(_ raw: String) -> String {
@@ -54,7 +56,7 @@ struct ServerSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("서버 주소").font(.subheadline).foregroundStyle(Color.muted)
-                    TextField("pulibom.vercel.app", text: $draft)
+                    TextField("pulibom-three.vercel.app", text: $draft)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -63,7 +65,7 @@ struct ServerSettingsView: View {
                         .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
                         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.honey, lineWidth: 1))
                         .onSubmit(save)
-                    Text("보통은 pulibom.vercel.app 그대로 두면 돼요. 맥에서 켠 개발 서버에 붙을 땐 '맥 IP 주소:3000'을 넣어 주세요.")
+                    Text("보통은 pulibom-three.vercel.app 그대로 두면 돼요. 맥에서 켠 개발 서버에 붙을 땐 '맥 IP 주소:3000'을 넣어 주세요.")
                         .font(.footnote)
                         .foregroundStyle(Color.muted)
                 }

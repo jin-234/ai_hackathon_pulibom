@@ -30,6 +30,7 @@ export type MyResult = {
   answer: string | null; // 정답
   answerText: string | null; // 답안 칸에 쓴 답
   answerCorrect: boolean | null; // 답안 칸 답이 정답과 같은지 (null: 비교할 수 없음)
+  hasScratch: boolean; // 연습장도 냈는지
   solution: string[]; // 단계별 해설
 };
 
@@ -51,6 +52,7 @@ export default function StudentApp({
   initialStrokes = {},
   initialAnswers = {},
   initialScratch = {},
+  initialDraftAt = {},
   closed = false,
   dueAt,
   results,
@@ -63,6 +65,7 @@ export default function StudentApp({
   initialStrokes?: Record<string, Stroke[]>; // 문항별 마지막으로 낸 풀이의 획 (다시 풀 때 그 위에서 고친다)
   initialAnswers?: Record<string, string>; // 문항별 마지막으로 낸 답안 칸 답
   initialScratch?: Record<string, Stroke[]>; // 문항별 마지막으로 낸 연습장 필기
+  initialDraftAt?: Record<string, number>; // 서버에 자동 저장된 풀던 중 기록의 시각 (이 기기 기록보다 새것이면 그걸 쓴다)
   closed?: boolean;
   dueAt?: number;
   results?: Record<string, MyResult>;
@@ -82,7 +85,7 @@ export default function StudentApp({
   const [color, setColor] = useState(INK_COLORS[0]);
   const [thick, setThick] = useState(false);
   const scratchRef = useRef<Record<string, Stroke[]>>({ ...initialScratch });
-  // 칸 배치: 그림 문제(또는 연습장에 쓴 게 있으면)는 연습장 + 정리 풀이 두 칸, 아니면 정리 풀이 한 칸. 학생이 바꿀 수도 있다
+  // 칸 배치: 모든 문항이 연습장 + 정리 풀이 두 칸으로 시작한다 (학생이 정리 풀이 한 칸으로 바꿀 수도 있다)
   const [twoPaneOf, setTwoPaneOf] = useState<Record<string, boolean>>({});
   // 문항별 풀이: 마지막으로 낸 풀이로 시작하고, 다른 문항으로 넘어갈 때 쓰던 풀이도 여기에 남겨 둔다
   const inkRef = useRef<Record<string, Stroke[]>>({ ...initialStrokes });
@@ -99,7 +102,8 @@ export default function StudentApp({
   const [answer, setAnswer] = useState(() => ansRef.current[problem.id] ?? "");
   const answerKey = (problemId: string) => `pulibom:draft-answer:${studentId}:${problemId}`;
   const scratchKey = (problemId: string) => `pulibom:draft-scratch:${studentId}:${problemId}`;
-  const twoPane = twoPaneOf[problem.id] ?? Boolean(problem.figure || scratchRef.current[problem.id]?.length);
+  const draftAtKey = (problemId: string) => `pulibom:draft-at:${studentId}:${problemId}`;
+  const twoPane = twoPaneOf[problem.id] ?? true;
   const figure = problem.figure;
   // 자동 저장: 쓰는 중인 풀이를 이 기기에 저장해서, 앱을 껐다 켜도 이어서 쓸 수 있게 (제출하면 지운다)
   const draftKey = (problemId: string) => `pulibom:draft:${studentId}:${problemId}`;
@@ -109,6 +113,9 @@ export default function StudentApp({
     if (results || closed) return;
     for (const p of PROBLEMS) {
       try {
+        // 다른 기기에서 더 나중에 쓴 게 서버에 있으면 이 기기 기록은 쓰지 않는다
+        const localAt = Number(localStorage.getItem(draftAtKey(p.id)) ?? 0);
+        if (localAt < (initialDraftAt[p.id] ?? 0)) continue;
         const raw = localStorage.getItem(draftKey(p.id));
         if (raw) inkRef.current[p.id] = JSON.parse(raw) as Stroke[];
         const ans = localStorage.getItem(answerKey(p.id));
@@ -125,13 +132,53 @@ export default function StudentApp({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const saveDraft = (strokes: Stroke[]) => {
+    queueDraft({ strokes });
     inkRef.current[problem.id] = strokes;
     try {
       localStorage.setItem(draftKey(problem.id), JSON.stringify(strokes));
       setSavedAt(Date.now());
     } catch {}
   };
+  // 서버 자동 저장: 쓰다가 1.5초 멈추면 바뀐 칸만 보낸다 (제출 안 해도 다른 기기에서 이어 쓰게)
+  const pendingRef = useRef<Record<string, { strokes?: Stroke[]; scratch?: Stroke[]; answer?: string }>>({});
+  const syncTimer = useRef(0);
+  const flushDrafts = (keepalive = false) => {
+    clearTimeout(syncTimer.current);
+    const all = pendingRef.current;
+    pendingRef.current = {};
+    for (const [problemId, patch] of Object.entries(all))
+      fetch("/api/drafts", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ problemId, ...patch }),
+        keepalive,
+      }).catch(() => {});
+  };
+  const queueDraft = (patch: { strokes?: Stroke[]; scratch?: Stroke[]; answer?: string }) => {
+    if (results || closed) return;
+    pendingRef.current[problem.id] = { ...pendingRef.current[problem.id], ...patch };
+    try {
+      localStorage.setItem(draftAtKey(problem.id), String(Date.now()));
+    } catch {}
+    clearTimeout(syncTimer.current);
+    syncTimer.current = window.setTimeout(() => flushDrafts(), 1500);
+  };
+  // 앱을 내리거나 화면을 떠날 때 남은 걸 바로 보낸다
+  const flushRef = useRef(flushDrafts);
+  flushRef.current = flushDrafts;
+  useEffect(() => {
+    const onHide = () => document.visibilityState === "hidden" && flushRef.current(true);
+    const onLeave = () => flushRef.current(true);
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onLeave);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onLeave);
+      flushRef.current();
+    };
+  }, []);
   const saveScratch = (strokes: Stroke[]) => {
+    queueDraft({ scratch: strokes });
     scratchRef.current[problem.id] = strokes;
     try {
       localStorage.setItem(scratchKey(problem.id), JSON.stringify(strokes));
@@ -139,6 +186,7 @@ export default function StudentApp({
     } catch {}
   };
   const saveAnswer = (v: string) => {
+    queueDraft({ answer: v });
     setAnswer(v);
     ansRef.current[problem.id] = v;
     try {
@@ -202,6 +250,9 @@ export default function StudentApp({
     const scratch = sc?.strokes.length ? { strokes: sc.strokes, imageDataUrl: sc.imageDataUrl } : undefined;
     const answerText = answer.trim();
     if (!answerText && !confirm("답안 칸이 비어 있어요. 그래도 제출할까요?")) return;
+    // 이 문항의 자동 저장은 보내지 않는다 (제출 뒤에 도착하면 지운 기록이 되살아난다). 다른 문항 것은 지금 보낸다
+    delete pendingRef.current[problem.id];
+    flushDrafts();
     setSending(true);
     try {
       const res = await fetch("/api/submissions", {
@@ -218,6 +269,7 @@ export default function StudentApp({
         localStorage.removeItem(draftKey(problem.id));
         localStorage.removeItem(answerKey(problem.id));
         localStorage.removeItem(scratchKey(problem.id));
+        localStorage.removeItem(draftAtKey(problem.id));
       } catch {}
       const n = nextUnsolved(idx);
       if (n !== null) goto(n, { submitted: true });
@@ -749,16 +801,35 @@ function ResultCard({ r }: { r: MyResult | undefined }) {
 // 내가 낸 마지막 풀이 (원본 이미지)
 function MySolution({ r }: { r: MyResult | undefined }) {
   const [missing, setMissing] = useState(false);
+  const [view, setView] = useState<"main" | "scratch">("main"); // 정리 풀이 / 연습장
   if (!r)
     return (
       <div className="grid flex-1 place-items-center rounded-3xl border border-dashed border-line bg-paper/60 text-sm text-muted">
         제출한 풀이가 없어요. 마감된 과제라 이제 낼 수 없어요.
       </div>
     );
+  const scratch = view === "scratch" && r.hasScratch;
   return (
     <div className="flex flex-1 flex-col gap-2 rounded-3xl border border-line bg-paper p-4">
-      <div className="flex items-center text-sm">
+      <div className="flex items-center gap-2 text-sm">
         <b>내 풀이</b>
+        {/* 연습장도 냈으면 정리 풀이 ↔ 연습장 */}
+        {r.hasScratch && (
+          <div className="ml-2 flex overflow-hidden rounded-full border border-line text-xs">
+            {(["main", "scratch"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => {
+                  setView(v);
+                  setMissing(false);
+                }}
+                className={`px-3 py-1 font-semibold ${view === v ? "bg-honey text-ink" : "text-muted"}`}
+              >
+                {v === "main" ? "정리 풀이" : "연습장"}
+              </button>
+            ))}
+          </div>
+        )}
         <span className="ml-auto text-xs text-muted">
           {new Date(r.submittedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 제출
         </span>
@@ -768,11 +839,11 @@ function MySolution({ r }: { r: MyResult | undefined }) {
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          key={r.submissionId}
-          src={`/api/submissions/${r.submissionId}/image`}
-          alt="내가 제출한 풀이"
+          key={`${r.submissionId}-${scratch ? "scratch" : "main"}`}
+          src={`/api/submissions/${r.submissionId}/${scratch ? "scratch" : "image"}`}
+          alt={scratch ? "내 연습장" : "내가 제출한 풀이"}
           onError={() => setMissing(true)}
-          className="w-full flex-1 rounded-2xl border border-line bg-white object-contain"
+          className="min-h-0 w-full flex-1 rounded-2xl border border-line bg-white object-contain"
         />
       )}
     </div>

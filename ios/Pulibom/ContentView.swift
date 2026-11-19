@@ -5,6 +5,8 @@ struct ContentView: View {
     @AppStorage("serverURL") private var serverURL = ServerAddress.deployed
     // Vercel 배포 전에 저장해 둔 맥 IP 를 한 번만 Vercel 로 바꿔 줬는지
     @AppStorage("movedToDeployed") private var movedToDeployed = false
+    // 개인 배포 주소(pulibom.vercel.app)를 팀 사이트로 한 번만 바꿔 줬는지
+    @AppStorage("movedToTeamSite") private var movedToTeamSite = false
     @State private var showSettings = false
     @State private var loadError: String?
     @State private var reloadToken = 0
@@ -76,6 +78,10 @@ struct ContentView: View {
             if !movedToDeployed {
                 movedToDeployed = true
                 if serverURL.isEmpty || ServerAddress.isLocal(serverURL) { serverURL = ServerAddress.deployed }
+            }
+            if !movedToTeamSite {
+                movedToTeamSite = true
+                if serverURL == ServerAddress.oldDeployed { serverURL = ServerAddress.deployed }
             }
             // 수업 중에 화면이 꺼지지 않게
             UIApplication.shared.isIdleTimerDisabled = true

@@ -3,8 +3,9 @@ import StudentApp, { type MyResult } from "@/components/StudentApp";
 import { getAssignment, studentCanSee } from "@/lib/assignments";
 import { studentCurrentClassIds } from "@/lib/classes";
 import { getSession } from "@/lib/session";
+import { listDrafts, type Draft } from "@/lib/drafts";
 import { latestAnswers, latestScratch, latestStrokes, listSubmissions } from "@/lib/store";
-import { statusOf } from "@/lib/types";
+import { statusOf, type Stroke } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -55,13 +56,24 @@ export default async function SolvePage({ params }: { params: Promise<{ assignme
         answer: p.answer || null,
         answerText: s.answerText ?? null,
         answerCorrect: s.answerCorrect ?? null,
+        hasScratch: Boolean(s.hasScratch),
         solution: p.solution ?? [],
       };
     }
   // 아직 열린 과제: 이미 낸 문항은 마지막 풀이를 캔버스에 그대로 띄워서 그 위에서 고친다
   const ids = assignment.problems.map((p) => p.id);
-  const [strokes, answers, scratch] =
-    st === "closed" ? [{}, {}, {}] : await Promise.all([latestStrokes(session.id, ids), latestAnswers(session.id, ids), latestScratch(session.id, ids)]);
+  const [strokes, answers, scratch, drafts]: [Record<string, Stroke[]>, Record<string, string>, Record<string, Stroke[]>, Record<string, Draft>] =
+    st === "closed"
+      ? [{}, {}, {}, {}]
+      : await Promise.all([latestStrokes(session.id, ids), latestAnswers(session.id, ids), latestScratch(session.id, ids), listDrafts(session.id, ids)]);
+  // 풀던 중 자동 저장된 게 있으면 그걸로 시작 (제출하면 지우므로 있으면 마지막 제출보다 새것)
+  const draftAt: Record<string, number> = {};
+  for (const [pid, d] of Object.entries(drafts)) {
+    if (d.strokes) strokes[pid] = d.strokes;
+    if (d.scratch) scratch[pid] = d.scratch;
+    if (d.answer !== undefined) answers[pid] = d.answer;
+    draftAt[pid] = d.updatedAt;
+  }
   return (
     <StudentApp
       key={assignment.id}
@@ -73,6 +85,7 @@ export default async function SolvePage({ params }: { params: Promise<{ assignme
       initialStrokes={strokes}
       initialAnswers={answers}
       initialScratch={scratch}
+      initialDraftAt={draftAt}
       closed={st === "closed"}
       results={st === "closed" ? results : undefined}
       dueAt={st === "closed" ? undefined : assignment.dueAt}

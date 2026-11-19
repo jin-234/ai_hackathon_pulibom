@@ -219,8 +219,9 @@ const InkCanvas = forwardRef<
     [paint],
   );
 
-  // 칸이 늘어나면 캔버스 크기가 바뀌어 지워지므로 다시 그린다
-  useEffect(() => redraw(strokes), [strokes, rows, sharpZoom, redraw]);
+  // 칸 높이(h)가 바뀌면 캔버스 크기가 바뀌어 지워지므로 다시 그린다
+  // (칸 수가 같아도 처음 칸 높이를 잴 때 h 가 바뀐다 → rows 만 보면 저장된 풀이가 빈칸으로 보였다)
+  useEffect(() => redraw(strokes), [strokes, h, sharpZoom, redraw]);
 
   // 확대하면서 두 손가락 가운데가 제자리에 있도록 스크롤을 맞춘다 (크기가 바뀐 뒤 바로)
   useLayoutEffect(() => {
@@ -569,11 +570,10 @@ const InkCanvas = forwardRef<
               {backdrop}
             </div>
           )}
-          <canvas ref={canvasRef} width={W} height={h} className="relative block h-full w-full" />
+          {/* 캔버스 해상도는 sizeCanvas 만 정한다 (width·height 속성을 주면 바뀔 때마다 그림이 지워진다) */}
+          <canvas ref={canvasRef} className="relative block h-full w-full" />
           <canvas
             ref={liveRef}
-            width={W}
-            height={h}
             className="absolute inset-0 block h-full w-full select-none"
             style={{ cursor: tool === "eraser" ? "cell" : "crosshair", touchAction: zoom > 1 ? "pan-x pan-y" : "pan-y", WebkitTouchCallout: "none", WebkitUserSelect: "none" }}
             onPointerDown={onDown}
