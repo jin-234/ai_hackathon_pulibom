@@ -14,6 +14,8 @@ export type ErrorType =
   | "FRACTION" // 분수 계산 (통분·약분·역수)
   | "ARITH" // 자연수·소수 계산, 계산 순서
   | "FORMULA" // 넓이·부피·비율·평균 등 공식·개념 적용
+  | "FACTOR" // 곱셈 공식·인수분해
+  | "COPY" // 옮겨 적기 (문제를 옮겨 적다 바꿈, 구한 값과 다른 답을 씀)
   | "UNREADABLE" // 판독 불가
   | "NONE"; // 오류 없음
 
@@ -34,6 +36,8 @@ export const ERROR_LABEL: Record<ErrorType, string> = {
   FRACTION: "분수 계산",
   ARITH: "기본 계산·계산 순서",
   FORMULA: "공식·개념 적용",
+  FACTOR: "곱셈 공식·인수분해",
+  COPY: "옮겨 적기 실수",
   UNREADABLE: "판독 어려움",
   NONE: "오류 없음",
 };
@@ -134,6 +138,7 @@ export type Analysis = {
   firstErrorLine: number | null; // OCR 줄 번호 (0부터), 없으면 null
   errorType: ErrorType;
   concept: string;
+  errorConcept?: string; // 처음 틀린 줄에서 쓰던 개념 (예: 이차방정식 문항인데 인수분해 단계에서 틀림 → '인수분해'). 보충 문항의 개념
   reason: string;
   suggestion: string;
   needsReview: boolean;
@@ -308,4 +313,6 @@ export type StudentSummary = {
   checkQuestions: string[]; // 교사가 학생에게 던질 확인 질문
   practice: string[]; // 보충 연습 방향
   cautions: string[]; // 판독 어려움·근거 부족 등 교사가 직접 확인할 점
+  // 고등학생: 틀린 풀이를 다시 봐야 할 중학 기초 테마로 묶은 것 (foundations.ts, 코드가 센다. 많은 순)
+  foundations?: { no: number; name: string; covers: string; count: number; problems: number; examples: string[] }[];
 };
