@@ -2,6 +2,7 @@
 import QuestionText from "@/components/QuestionText";
 
 import { useEffect, useState } from "react";
+import { gradeLabel } from "@/lib/curriculum";
 import { FOUNDATION_SOURCE } from "@/lib/foundations";
 import type { StudentSummary } from "@/lib/types";
 
@@ -79,8 +80,34 @@ export default function AiSummary({
         <div className={`mt-4 flex flex-col gap-4 text-sm ${busy ? "opacity-50" : ""}`}>
           <p className="rounded-2xl bg-honey-soft/60 p-4 leading-relaxed">{s.overview}</p>
 
-          {/* 고등학생: 틀린 풀이를 다시 볼 중학 기초 테마로 묶은 것 (코드가 센 값, 많은 순) */}
-          {!!s.foundations?.length && (
+          {/* 다시 볼 이전 학년 기초: 틀린 단계가 학생 학년보다 낮은 학년 소단원인 풀이를 소단원별로 (코드가 센 값, 많은 순) */}
+          {!!s.gaps?.length && (
+            <div className="rounded-2xl border border-line p-4">
+              <h3 className="text-sm font-semibold">
+                다시 볼 이전 학년 기초 <span className="font-normal text-muted">· 틀린 단계의 소단원 기준</span>
+              </h3>
+              <ul className="mt-2 flex flex-col gap-2">
+                {s.gaps.map((g) => (
+                  <li key={g.key} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${g.problems >= 2 ? PRIORITY.높음 : PRIORITY.낮음}`}>
+                      {g.grade ? gradeLabel(g.grade) : "중학"}
+                    </span>
+                    <b>{g.grade ? g.label.split(" · ").slice(1).join(" · ") : g.label.replace(/^중학 /, "")}</b>
+                    <span className="text-xs text-muted">
+                      틀린 풀이 {g.count}개{g.problems >= 2 ? ` · 서로 다른 문항 ${g.problems}개` : ""}
+                    </span>
+                    <div className="w-full text-xs text-muted">
+                      {g.covers}
+                      {g.examples.length > 0 && <> · 예: {g.examples.join(", ")}</>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* 예전에 만든 요약 (고등학생: 중학 기초 테마). 새 요약은 위 gaps */}
+          {!s.gaps?.length && !!s.foundations?.length && (
             <div className="rounded-2xl border border-line p-4">
               <h3 className="text-sm font-semibold">
                 다시 볼 중학 기초 <span className="font-normal text-muted">· {FOUNDATION_SOURCE} 기준</span>

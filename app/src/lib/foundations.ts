@@ -24,7 +24,7 @@ export const themeLabel = (t: FoundationTheme) => `THEME ${String(t.no).padStart
 const theme = (no: number) => FOUNDATION_THEMES[no - 1];
 
 // 공부 습관 실수 (조건·구하는 값·옮겨 적기)와 판정이 아닌 것은 중학 기초 테마로 묶지 않는다
-const NOT_FOUNDATION: ErrorType[] = ["CONDITION", "TARGET", "COPY", "UNREADABLE", "NONE"];
+export const NOT_FOUNDATION: ErrorType[] = ["CONDITION", "TARGET", "COPY", "UNREADABLE", "NONE"];
 
 // 틀린 단계(오류 유형)가 곧 비어 있는 중학 기초다: 고1 인수분해 문항이라도 부호 계산을 틀렸으면 '수와 연산'
 const BY_ERROR: Partial<Record<ErrorType, number>> = {
