@@ -6,8 +6,6 @@ import { LOW_OCR_CONFIDENCE, OCR_ALLOWED, falseNumberEquation } from "./types";
 //   흐름: 업스테이지 OCR → 확신 없는 줄 고르기(suspectLines) → Claude 가 이미지를 보고 다시 읽기 → 채점(Claude)
 //   제출 채점 경로에서는 Gemini·Solar 를 쓰지 않는다. Claude 호출이 실패하면 아무것도 바꾸지 않는다 (OCR 결과 그대로).
 //   VISION_MODEL: Claude 모델 (기본 sonnet, 쉼표로 여러 개면 앞 모델이 실패할 때 다음 모델)
-//   (이 레포 추가) MATHPIX_APP_ID·MATHPIX_APP_KEY 가 있으면 이미지 전체 다시 읽기(full)에서 Claude 보다 먼저 Mathpix OCR 로 읽고,
-//   그 결과에 확신 없는 줄이 없을 때만 쓴다. 키가 없으면 이 단계는 건너뛴다
 const MODELS = () =>
   (env("VISION_MODEL") ?? "sonnet")
     .split(",")
@@ -53,9 +51,6 @@ export function suspectLines(lines: string[], confidences: number[], fractions: 
 // 이미지 전체를 처음부터 다시 읽기 (OCR 글자는 주지 않음). 돌려주는 값: 줄들, 쓴 모델 (실패하면 빈 배열)
 export async function readWhole(png: Buffer, v = "x"): Promise<{ lines: string[]; model?: string }> {
   if (!hasVision()) return { lines: [] };
-  // (이 레포 추가) Mathpix 먼저: 다시 읽은 결과에도 확신 없는 줄이 있으면 버리고 Claude 로
-  const mathpix = await readWithMathpix(png, v);
-  if (mathpix.length) return { lines: mathpix, model: "mathpix" };
   const prompt = `중학생이 손으로 쓴 수학 풀이 이미지다. 위에서부터 줄마다 쓰인 식을 학생이 쓴 그대로 옮겨 적는다.
 - 학생이 틀리게 썼어도 절대 고치지 않는다 (채점은 다음 단계에서 한다). 계산이 틀렸으면 틀린 그대로 쓴다.
 - ${variableHint(v)}
@@ -64,55 +59,6 @@ export async function readWhole(png: Buffer, v = "x"): Promise<{ lines: string[]
 - 알아볼 수 없는 글자는 ?.
 - JSON만 출력: {"lines": ["첫 줄", "둘째 줄", ...]}`;
   return withModels(prompt, [png], (r) => r.map((l) => String(l ?? "").replace(/\s/g, "")).filter((l) => l && l !== "?"));
-}
-
-// ── (이 레포 추가) Mathpix OCR ─────────────────────────────
-const MATHPIX_ID = () => env("MATHPIX_APP_ID") ?? "";
-const MATHPIX_KEY = () => env("MATHPIX_APP_KEY") ?? "";
-export function hasMathpix() {
-  return MATHPIX_ID().length > 0 && MATHPIX_KEY().length > 0;
-}
-
-// 키가 없거나, 실패하거나, 읽은 줄에 확신 없는 줄이 있으면 빈 배열 (→ Claude 로)
-async function readWithMathpix(png: Buffer, v: string): Promise<string[]> {
-  if (!hasMathpix()) return [];
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30000);
-  try {
-    const res = await fetch("https://api.mathpix.com/v3/text", {
-      method: "POST",
-      signal: ctrl.signal,
-      headers: { app_id: MATHPIX_ID(), app_key: MATHPIX_KEY(), "Content-Type": "application/json" },
-      body: JSON.stringify({ src: `data:image/png;base64,${png.toString("base64")}`, formats: ["text"], rm_spaces: true, math_inline_delimiters: ["", ""] }),
-    });
-    if (!res.ok) return [];
-    const j = (await res.json()) as { text?: string; confidence?: number; error?: string };
-    if (j.error) return [];
-    const lines = (j.text ?? "")
-      .split("\n")
-      .map((l) => fromLatex(l, v))
-      .filter(Boolean);
-    const conf = typeof j.confidence === "number" ? j.confidence : 1;
-    return lines.length && !suspectLines(lines, lines.map(() => conf), [], v).length ? lines : [];
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// Mathpix 의 LaTeX 조각을 앱의 줄 형식(공백 없음, 분수 a/b)으로
-function fromLatex(line: string, v: string) {
-  let s = line
-    .replace(/\\\(|\\\)|\\\[|\\\]|\$/g, "")
-    .replace(/\\left|\\right/g, "")
-    .replace(/\\times|\\cdot/g, "×")
-    .replace(/\\div/g, "÷")
-    .replace(/\\[,;!: ]/g, "");
-  const wrap = (t: string) => (/^[0-9a-z.]+$/i.test(t) ? t : `(${t})`);
-  for (let i = 0; i < 5 && s.includes("\\frac"); i++) s = s.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, (_, a: string, b: string) => `${wrap(a)}/${wrap(b)}`);
-  s = s.replace(/[{}]/g, "").replace(/\s/g, "").replace(/[−–—]/g, "-");
-  return v === "x" ? s.replace(/X/g, "x") : s;
 }
 
 function variableHint(v: string) {
