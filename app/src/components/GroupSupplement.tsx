@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { FigureEditor } from "@/components/FigureEditor";
 import { checkRow, CountSelect, editRow, toQuestion } from "@/components/SupplementPanel";
 import type { SupplementCandidate, SupplementDraft } from "@/lib/supplement";
 import { ERROR_LABEL, formatDue, type ErrorType, type StudentStats } from "@/lib/types";
@@ -199,6 +200,9 @@ export default function GroupSupplement({ classId, group, onClose }: { classId: 
                     >
                       ✕
                     </button>
+                  </div>
+                  <div className="mt-1.5 pl-8">
+                    <FigureEditor figure={r.figure} onChange={(figure) => setRows((rs) => rs.map((x) => (x.key === r.key ? { ...x, figure } : x)))} />
                   </div>
                   <div className="mt-1.5 pl-8 text-xs">
                     {c.ok ? (

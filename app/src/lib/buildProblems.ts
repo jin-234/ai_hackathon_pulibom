@@ -1,7 +1,8 @@
 import { solveLinear, type Solved } from "./equation";
+import { sanitizeFigure } from "./figure";
 import { variableOf, type Problem } from "./types";
 
-export type QuestionInput = { question: string; answer?: string; solution?: string; concept?: string; templateId?: string };
+export type QuestionInput = { question: string; answer?: string; solution?: string; concept?: string; templateId?: string; figure?: unknown };
 
 // 풀이기는 x 만 읽으므로, y·a·b·m·n·i 로 낸 식은 x 로 바꿔 풀고 정답·해설을 다시 그 글자로 쓴다
 function solveAny(question: string): Solved {
@@ -18,6 +19,10 @@ export function buildProblems(questions: QuestionInput[]): Omit<Problem, "id">[]
     .filter((q) => q.question?.trim())
     .map((q, i) => {
       const manualSolution = (q.solution ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+      // 그림: 서버에서 다시 검사 (좌표·표시가 안 맞거나 형식이 틀리면 출제를 막는다)
+      const fig = q.figure ? sanitizeFigure(q.figure) : {};
+      if (q.figure && !fig.figure) throw new Error(`${i + 1}번 문항 그림: ${fig.problem ?? "그릴 수 없어요"}`);
+      const figure = fig.figure ? { figure: fig.figure } : {};
       try {
         const s = solveAny(q.question);
         return {
@@ -28,6 +33,7 @@ export function buildProblems(questions: QuestionInput[]): Omit<Problem, "id">[]
           solution: manualSolution.length ? manualSolution : s.steps,
           // 문제은행 틀에서 만든 문항이면 그 틀 (id 모양만 확인)
           ...(q.templateId && /^[\w-]+$/.test(q.templateId) ? { templateId: q.templateId } : {}),
+          ...figure,
         };
       } catch {
         return {
@@ -39,6 +45,7 @@ export function buildProblems(questions: QuestionInput[]): Omit<Problem, "id">[]
           solution: manualSolution,
           // 문제은행 계산 틀에서 만든 문항이면 그 틀
           ...(q.templateId && /^[\w-]+$/.test(q.templateId) ? { templateId: q.templateId } : {}),
+          ...figure,
         };
       }
     });

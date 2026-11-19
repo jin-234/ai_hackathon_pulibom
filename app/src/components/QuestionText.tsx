@@ -24,10 +24,11 @@ export function splitChoices(text: string): { stem: string; choices: string[] } 
 
 export default function QuestionText({ text, className = "" }: { text: string; className?: string }) {
   const { stem, choices } = splitChoices(text);
-  if (!choices.length) return <span className={className}>{text}</span>;
+  // 문제 글 안의 줄바꿈('다음을 계산하시오.\n(2 + 3i)(1 - i)')은 그대로 보이게 (whitespace-pre-line)
+  if (!choices.length) return <span className={`whitespace-pre-line ${className}`}>{text}</span>;
   return (
     <span className={`inline-flex flex-col gap-1 text-left ${className}`}>
-      {stem && <span>{stem}</span>}
+      {stem && <span className="whitespace-pre-line">{stem}</span>}
       <span className="flex flex-col gap-0.5">
         {choices.map((c, i) => (
           <span key={i} className="pl-1">

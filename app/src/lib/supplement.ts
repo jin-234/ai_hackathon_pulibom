@@ -3,6 +3,8 @@ import { getAssignment, listAssignments, setSupplementReview } from "./assignmen
 import { makeVariants, solveLinear } from "./equation";
 import { draftConceptProblems, sameNumbers } from "./unitProblems";
 import { getStudentGrade } from "./roster";
+import { gradeName } from "./curriculum";
+import type { Figure } from "./figure";
 import { describeAdapt, getProfile, intersectProfiles, toAdapt, type Adapt, type LearningProfile } from "./learningProfile";
 import { pickFromBank } from "./problemBank";
 import { env } from "./env";
@@ -52,6 +54,7 @@ export type SupplementCandidate = {
   source: "bank" | "ai" | "rule";
   templateId?: string; // 문제은행 틀에서 만든 문항
   calc?: boolean; // 식이 아니라 정답을 따로 정해 준 문항 (문장제 등)
+  figure?: Figure; // 문항 그림 (AI 설계도 또는 선생님이 올린 이미지)
 };
 export type SupplementDraft = {
   concept: string;
@@ -126,6 +129,7 @@ async function conceptCandidates(grade: number, concept: string, basis: string[]
     why: it.doubt ? `⚠ 검산이 어긋났어요. 정답을 꼭 확인해 주세요 (${it.doubt})` : `풀이에서 틀린 '${concept}' 단계를 직접 연습하는 문항이에요.`,
     source: "ai" as const,
     calc: true, // 풀이기로 못 푸니 AI 가 정하고 검산한 정답을 그대로 쓴다
+    ...(it.figure ? { figure: it.figure } : {}),
   }));
 }
 
@@ -150,6 +154,7 @@ async function fillCandidates(opts: {
   practice?: string[];
   useAi?: boolean;
   adapt?: Adapt;
+  grade?: number | null;
 }): Promise<SupplementCandidate[]> {
   const { concept, targetError, basisSubs, basis, problems, count } = opts;
   const existing = new Set([...problems.values()].map((p) => p.question.replace(/\s/g, "")));
@@ -190,7 +195,7 @@ async function fillCandidates(opts: {
     // 문항마다 모양을 정해 준다 (첫 문항은 문장제)
     const FORMS = ["문장제", "좌우가 바뀐 식 (c = ax + b 꼴)", "괄호가 있는 식 (k(x + m) = c 꼴)", "양변에 x 가 있는 식", "상수항이 앞에 오는 식 (b - ax = c 꼴)", "문장제"];
     const plan = Array.from({ length: want + 2 }, (_, i) => FORMS[i % FORMS.length]);
-    const system = `너는 중학교 1학년 수학 보충 문항을 만드는 도우미다. 학생이 틀린 단계(오류 유형)를 다시 거치게 하되, 이미 고른 문항과 '숫자만 다른' 문항은 만들지 않는다.
+    const system = `너는 ${gradeName(opts.grade ?? 1)} 수학 보충 문항을 만드는 도우미다. 학생이 틀린 단계(오류 유형)를 다시 거치게 하되, 이미 고른 문항과 '숫자만 다른' 문항은 만들지 않는다.
 규칙:
 - 문항마다 정해 준 모양으로 만든다. 문장제는 생활 상황(나이, 물건값, 개수, 거리 등)을 읽고 일차방정식을 세워 푸는 문제다.
 - 이미 고른 문항과 숫자만 다른 같은 모양의 식은 만들지 않는다.
@@ -245,7 +250,7 @@ ${plan.map((f, i) => `${i + 1}. ${f}`).join("\n")}`;
         }
       }
       // 문장제는 다른 AI가 문장만 보고 다시 풀어, 같은 답이 나온 것만 쓴다
-      for (const w of await verifyWordProblems(words)) {
+      for (const w of await verifyWordProblems(words, opts.grade)) {
         if (candidates.length >= count) break;
         seen.add(w.question.replace(/\s/g, ""));
         candidates.push({ ...w, source: "ai", calc: true });
@@ -278,9 +283,9 @@ ${plan.map((f, i) => `${i + 1}. ${f}`).join("\n")}`;
 }
 
 // 문장제 검산: 문제만 보고 처음부터 다시 풀어 답이 같은 것만 남긴다 (검산이 안 되면 문장제는 쓰지 않는다)
-async function verifyWordProblems<T extends { question: string; answer: string }>(items: T[]): Promise<T[]> {
+async function verifyWordProblems<T extends { question: string; answer: string }>(items: T[], grade?: number | null): Promise<T[]> {
   if (!items.length) return [];
-  const system = `너는 중학교 1학년 수학 문제를 처음 보는 학생처럼 직접 푸는 검산 도우미다.
+  const system = `너는 ${gradeName(grade ?? 1)} 수학 문제를 처음 보는 학생처럼 직접 푸는 검산 도우미다.
 - 각 문제를 처음부터 식을 세워 계산하고, 구한 답을 문제 조건에 다시 대입해 확인한다.
 - 조건이 맞지 않거나 답이 없거나 여러 개면 problem 에 이유를 쓴다 (문제없으면 빈 문자열).
 - answer 에는 구한 값의 숫자만 쓴다.
@@ -329,6 +334,7 @@ export async function draftSupplement(studentId: string, count = 3): Promise<Sup
     return { concept: step!, targetError, sourceSubmissionIds: basisSubs.map((s) => s.id), basis, candidates, adapted: describeAdapt(profile), profile };
   }
   const candidates = await fillCandidates({
+    grade,
     concept,
     targetError,
     basisSubs,
@@ -378,7 +384,7 @@ export async function draftGroupSupplement(
     const candidates = await conceptCandidates(grade ?? 1, step!, basis, problems, count);
     return { concept: step!, targetError, sourceSubmissionIds: basisSubs.map((s) => s.id), basis, candidates, adapted: describeAdapt(shared, "그룹 학생 모두가") };
   }
-  const candidates = await fillCandidates({ concept, targetError, basisSubs, basis, problems, count, adapt: toAdapt(shared) });
+  const candidates = await fillCandidates({ concept, targetError, basisSubs, basis, problems, count, adapt: toAdapt(shared), grade });
   const adapted = describeAdapt(shared, "그룹 학생 모두가");
   return { concept, targetError, sourceSubmissionIds: basisSubs.map((s) => s.id), basis, candidates, adapted };
 }
@@ -453,7 +459,7 @@ export async function reviewSupplement(assignmentId: string, studentId?: string)
   const targets = supplementStudents(a.supplement);
   const sid = studentId ?? targets[0];
   if (!sid || !targets.includes(sid)) throw new Error("이 보충 과제를 받은 학생이 아니에요.");
-  const [subs, problems] = await Promise.all([listSubmissions({ studentId: sid }), problemIndex()]);
+  const [subs, problems, grade] = await Promise.all([listSubmissions({ studentId: sid }), problemIndex(), getStudentGrade(sid).catch(() => null)]);
   const byId = new Map(subs.map((s) => [s.id, s]));
   const after = afterOf(a, subs, sid);
   if (!after.length) throw new Error("학생이 아직 보충 문항을 풀지 않았어요.");
@@ -468,7 +474,7 @@ export async function reviewSupplement(assignmentId: string, studentId?: string)
     return `- ${p?.question ?? s.question}: ${lines} [${verdict}${e ? `, ${ERROR_LABEL[e]}` : ""}${unreadable}]${s.teacher?.memo ? ` 교사 메모: ${s.teacher.memo}` : ""}`;
   };
 
-  const system = `너는 중학교 수학 교사를 돕는 도우미다. 보충 지도 전의 오답과 보충 문항 풀이를 비교해서 같은 오류가 사라졌는지 판단한다.
+  const system = `너는 ${grade ? gradeName(grade) : "중·고등학교"} 수학 교사를 돕는 도우미다. 보충 지도 전의 오답과 보충 문항 풀이를 비교해서 같은 오류가 사라졌는지 판단한다.
 규칙:
 - 기록에 있는 풀이만 근거로, 식을 직접 인용한다.
 - 판독 어려움(⚠) 표시 풀이는 판단에서 빼고, 판단할 근거가 부족하면 verdict 를 "판단 보류"로 한다.
