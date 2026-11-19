@@ -4,7 +4,7 @@
 //
 //   npm run test:weakness                 모든 학생
 //   npm run test:weakness -- 부호          이름에 '부호'가 들어간 학생만
-//   npm run test:weakness -- 설문          교사 설문 실수 유형 8개(+ 섞인 경우 2명)만
+//   npm run test:weakness -- 설문          교사 설문 실수 유형 9개(+ 섞인 경우 2명)만
 //   npm run test:weakness -- --json       요약 전체(JSON)도 출력
 //   npm run test:weakness -- --twice      같은 기록으로 요약을 두 번 만들어 같은지
 import { analyzeSolution } from "../src/lib/ai";
@@ -184,7 +184,7 @@ const STUDENTS: Dummy[] = [
     ],
   },
 
-  // ── 교사 설문에서 많이 꼽힌 실수 유형 8개 (ai.ts 의 TEACHER_PICKS): 유형마다 서로 다른 문항 3개에서 같은 실수 ──
+  // ── 교사 설문에서 많이 꼽힌 실수 유형 9개 (ai.ts 의 TEACHER_PICKS): 유형마다 서로 다른 문항 3개에서 같은 실수 ──
   {
     // 'x 는 양수' 같은 조건이 있는데 조건에 맞지 않는 값까지 답함
     name: "[설문] 조건을 놓치는 학생",
@@ -270,6 +270,17 @@ const STUDENTS: Dummy[] = [
       { q: "2x + 3 = 11", lines: ["2x+3=11", "2x=11-3", "2x=6", "x=3"], expect: "ARITH" },
       { q: "3x + 4 = 19", lines: ["3x+4=19", "3x=19-4", "3x=14", "x=14/3"], expect: "ARITH" },
       { q: "4x - 9 = 15", lines: ["4x-9=15", "4x=15+9", "4x=23", "x=23/4"], expect: "ARITH" },
+      OK_6X,
+    ],
+  },
+  {
+    // 문제를 옮겨 적다 숫자를 바꾸거나(첫 줄), 구한 값과 다른 답을 씀(마지막 줄). 계산·이항은 맞게 함
+    name: "[설문] 옮겨 적다가 숫자·답을 바꾸는 학생",
+    expectWeak: ["옮겨"],
+    attempts: [
+      { q: "2x + 3 = 11", lines: ["2x+5=11", "2x=11-5", "2x=6", "x=3"], expect: "COPY" },
+      { q: "3x + 4 = 19", lines: ["3x+4=19", "3x=19-4", "3x=15", "x=5", "x=3"], expect: "COPY" },
+      { q: "4x - 9 = 15", lines: ["4x-6=15", "4x=15+6", "4x=21", "x=21/4"], expect: "COPY" },
       OK_6X,
     ],
   },
