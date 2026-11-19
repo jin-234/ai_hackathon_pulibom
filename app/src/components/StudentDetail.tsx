@@ -426,6 +426,21 @@ function answerOf(s: Submission) {
   }
 }
 
+// 답안 칸에 따로 쓴 최종 답 + 정답과 같은지 (제출할 때 서버가 바로 비교)
+function AnswerBox({ s }: { s: Submission }) {
+  if (!s.answerText)
+    return <div className="rounded-xl border border-dashed border-line px-3 py-2 text-xs text-muted">답안 칸: 비어 있어요</div>;
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper px-3 py-2">
+      <span className="text-xs text-muted">학생 답</span>
+      <span className="break-words font-[family-name:var(--font-math)] text-lg font-bold text-ink">{s.answerText}</span>
+      {s.answerCorrect === true && <span className="rounded-full bg-sage-soft px-2 py-0.5 text-xs font-semibold text-[#5d7a50]">✓ 정답과 같음</span>}
+      {s.answerCorrect === false && <span className="rounded-full bg-salmon-soft px-2 py-0.5 text-xs font-semibold text-[#b5624f]">✗ 정답과 다름</span>}
+      {answerOf(s) && <span className="ml-auto text-xs text-muted">정답 <b className="font-[family-name:var(--font-math)] text-ink">{answerOf(s)}</b></span>}
+    </div>
+  );
+}
+
 const STATUS: Record<Submission["status"], { label: string; cls: string }> = {
   pending: { label: "분석 중", cls: "bg-honey-soft text-olive" },
   done: { label: "분석 완료", cls: "bg-sage-soft text-[#5d7a50]" },
@@ -512,13 +527,14 @@ export function SubmissionCard({
             }`}
           >
             <div className="text-xs text-muted">
-              학생 답{a?.correct === true ? " · 맞음" : a?.correct === false ? " · 틀림" : ""}
+              풀이 끝의 답{a?.correct === true ? " · 맞음" : a?.correct === false ? " · 틀림" : ""}
             </div>
             <div className={`break-words text-lg font-bold ${a?.correct === true ? "text-[#5d7a50]" : a?.correct === false ? "text-[#b5624f]" : "text-ink"}`}>
               {a?.recognizedAnswer ?? (s.status === "pending" ? "인식 중" : "-")}
             </div>
           </div>
         </div>
+        <AnswerBox s={s} />
         {imageMissing ? (
           <div className="rounded-xl border border-dashed border-line p-6 text-center text-xs text-muted">원본 풀이 이미지가 없어요.</div>
         ) : (
@@ -529,6 +545,13 @@ export function SubmissionCard({
             onError={() => setImageMissing(true)}
             className="rounded-xl border border-line"
           />
+        )}
+        {s.hasScratch && (
+          <details className="rounded-xl border border-line px-3 py-2 text-xs">
+            <summary className="cursor-pointer text-muted">연습장 보기 (그림·계산, AI 채점 안 함)</summary>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={`/api/submissions/${s.id}/scratch`} alt="연습장" loading="lazy" className="mt-2 rounded-lg border border-line bg-white" />
+          </details>
         )}
         <div className="text-xs text-muted">
           {stats.durationSec}초 · 지움 {stats.erases}회

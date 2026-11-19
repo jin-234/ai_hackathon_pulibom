@@ -5,8 +5,9 @@ import QuestionText from "@/components/QuestionText";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import AnswerField from "@/components/AnswerField";
 import Chick from "@/components/Chick";
-import InkCanvas, { type InkCanvasHandle } from "@/components/InkCanvas";
+import InkCanvas, { INK_COLORS, InkToolPill, type InkCanvasHandle, type InkTool } from "@/components/InkCanvas";
 import { ERROR_LABEL, formatDue, type AnalysisStatus, type ErrorType, type InkEvent, type Problem, type Stroke } from "@/lib/types";
 import LogoutButton from "@/components/LogoutButton";
 import { verdictOf as baseVerdict, type Verdict } from "@/lib/verdict";
@@ -27,6 +28,8 @@ export type MyResult = {
   } | null;
   teacher: { errorType: ErrorType | null; confirmedAt: number; memo: string | null } | null; // 선생님이 확인했을 때만
   answer: string | null; // 정답
+  answerText: string | null; // 답안 칸에 쓴 답
+  answerCorrect: boolean | null; // 답안 칸 답이 정답과 같은지 (null: 비교할 수 없음)
   solution: string[]; // 단계별 해설
 };
 
@@ -46,6 +49,8 @@ export default function StudentApp({
   problems: PROBLEMS,
   initialDone = {},
   initialStrokes = {},
+  initialAnswers = {},
+  initialScratch = {},
   closed = false,
   dueAt,
   results,
@@ -56,6 +61,8 @@ export default function StudentApp({
   problems: Problem[];
   initialDone?: Record<string, boolean>;
   initialStrokes?: Record<string, Stroke[]>; // 문항별 마지막으로 낸 풀이의 획 (다시 풀 때 그 위에서 고친다)
+  initialAnswers?: Record<string, string>; // 문항별 마지막으로 낸 답안 칸 답
+  initialScratch?: Record<string, Stroke[]>; // 문항별 마지막으로 낸 연습장 필기
   closed?: boolean;
   dueAt?: number;
   results?: Record<string, MyResult>;
@@ -68,7 +75,15 @@ export default function StudentApp({
   const [celebrate, setCelebrate] = useState(false);
   const [startedAt, setStartedAt] = useState(() => Date.now()); // 지금 문항을 이번에 펼친 시각
   const [elapsed, setElapsed] = useState(0);
-  const canvas = useRef<InkCanvasHandle>(null);
+  const canvas = useRef<InkCanvasHandle>(null); // 정리 풀이 (AI 가 읽는 칸)
+  const pad = useRef<InkCanvasHandle>(null); // 연습장 (AI 채점 안 함)
+  const activeRef = useRef<"main" | "pad">("main"); // 되돌리기 대상: 마지막으로 펜슬이 닿은 칸
+  const [tool, setTool] = useState<InkTool>("pen");
+  const [color, setColor] = useState(INK_COLORS[0]);
+  const [thick, setThick] = useState(false);
+  const scratchRef = useRef<Record<string, Stroke[]>>({ ...initialScratch });
+  // 칸 배치: 그림 문제(또는 연습장에 쓴 게 있으면)는 연습장 + 정리 풀이 두 칸, 아니면 정리 풀이 한 칸. 학생이 바꿀 수도 있다
+  const [twoPaneOf, setTwoPaneOf] = useState<Record<string, boolean>>({});
   // 문항별 풀이: 마지막으로 낸 풀이로 시작하고, 다른 문항으로 넘어갈 때 쓰던 풀이도 여기에 남겨 둔다
   const inkRef = useRef<Record<string, Stroke[]>>({ ...initialStrokes });
   const problem = PROBLEMS[idx];
@@ -79,6 +94,13 @@ export default function StudentApp({
   const firstStartRef = useRef<Record<string, number>>({ [PROBLEMS[idx].id]: startedAt });
   const eventsRef = useRef<Record<string, InkEvent[]>>({});
   const spentRef = useRef<Record<string, number>>({});
+  // 답안 칸: 문항별로 기억하고, 이 기기에 자동 저장 (제출하면 지운다)
+  const ansRef = useRef<Record<string, string>>({ ...initialAnswers });
+  const [answer, setAnswer] = useState(() => ansRef.current[problem.id] ?? "");
+  const answerKey = (problemId: string) => `pulibom:draft-answer:${studentId}:${problemId}`;
+  const scratchKey = (problemId: string) => `pulibom:draft-scratch:${studentId}:${problemId}`;
+  const twoPane = twoPaneOf[problem.id] ?? Boolean(problem.figure || scratchRef.current[problem.id]?.length);
+  const figure = problem.figure;
   // 자동 저장: 쓰는 중인 풀이를 이 기기에 저장해서, 앱을 껐다 켜도 이어서 쓸 수 있게 (제출하면 지운다)
   const draftKey = (problemId: string) => `pulibom:draft:${studentId}:${problemId}`;
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -89,9 +111,15 @@ export default function StudentApp({
       try {
         const raw = localStorage.getItem(draftKey(p.id));
         if (raw) inkRef.current[p.id] = JSON.parse(raw) as Stroke[];
+        const ans = localStorage.getItem(answerKey(p.id));
+        if (ans !== null) ansRef.current[p.id] = ans;
+        const sc = localStorage.getItem(scratchKey(p.id));
+        if (sc) scratchRef.current[p.id] = JSON.parse(sc) as Stroke[];
       } catch {}
     }
     canvas.current?.reset(inkRef.current[PROBLEMS[idx].id]);
+    pad.current?.reset(scratchRef.current[PROBLEMS[idx].id]);
+    setAnswer(ansRef.current[PROBLEMS[idx].id] ?? "");
     setDraftsLoaded(true);
     // 처음 한 번만 (이후엔 문항을 옮길 때 inkRef 로)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -100,6 +128,21 @@ export default function StudentApp({
     inkRef.current[problem.id] = strokes;
     try {
       localStorage.setItem(draftKey(problem.id), JSON.stringify(strokes));
+      setSavedAt(Date.now());
+    } catch {}
+  };
+  const saveScratch = (strokes: Stroke[]) => {
+    scratchRef.current[problem.id] = strokes;
+    try {
+      localStorage.setItem(scratchKey(problem.id), JSON.stringify(strokes));
+      setSavedAt(Date.now());
+    } catch {}
+  };
+  const saveAnswer = (v: string) => {
+    setAnswer(v);
+    ansRef.current[problem.id] = v;
+    try {
+      localStorage.setItem(answerKey(problem.id), v);
       setSavedAt(Date.now());
     } catch {}
   };
@@ -126,6 +169,9 @@ export default function StudentApp({
     } else {
       const cur = canvas.current?.getStrokes();
       if (cur) inkRef.current[pid] = cur;
+      const sc = pad.current?.getStrokes();
+      if (sc) scratchRef.current[pid] = sc;
+      ansRef.current[pid] = answer;
       eventsRef.current[pid] = [...(canvas.current?.getEvents() ?? []), { type: "leave", t: now }];
       spentRef.current[pid] = (spentRef.current[pid] ?? 0) + (now - startedAt);
     }
@@ -134,6 +180,8 @@ export default function StudentApp({
     const back = eventsRef.current[next];
     setIdx(i);
     canvas.current?.reset(inkRef.current[next], back ? [...back, { type: "return", t: now }] : []);
+    pad.current?.reset(scratchRef.current[next]);
+    setAnswer(ansRef.current[next] ?? "");
     setStartedAt(now);
     setElapsed(Math.floor((spentRef.current[next] ?? 0) / 1000));
   };
@@ -149,19 +197,27 @@ export default function StudentApp({
   const submit = async () => {
     const data = canvas.current?.getData();
     if (!data) return;
-    if (data.strokes.length === 0 && !confirm("풀이가 비어 있어요. 그래도 제출할까요?")) return;
+    if (data.strokes.length === 0 && !confirm("정리 풀이 칸이 비어 있어요. 그래도 제출할까요?")) return;
+    const sc = pad.current?.getData();
+    const scratch = sc?.strokes.length ? { strokes: sc.strokes, imageDataUrl: sc.imageDataUrl } : undefined;
+    const answerText = answer.trim();
+    if (!answerText && !confirm("답안 칸이 비어 있어요. 그래도 제출할까요?")) return;
     setSending(true);
     try {
       const res = await fetch("/api/submissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ problemId: problem.id, startedAt: firstStartRef.current[problem.id] ?? startedAt, submittedAt: Date.now(), ...data }),
+        body: JSON.stringify({ problemId: problem.id, startedAt: firstStartRef.current[problem.id] ?? startedAt, submittedAt: Date.now(), ...data, answerText, scratch }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "제출하지 못했어요.");
       setDone((d) => ({ ...d, [problem.id]: true }));
       inkRef.current[problem.id] = data.strokes;
+      ansRef.current[problem.id] = answerText;
+      scratchRef.current[problem.id] = sc?.strokes ?? [];
       try {
         localStorage.removeItem(draftKey(problem.id));
+        localStorage.removeItem(answerKey(problem.id));
+        localStorage.removeItem(scratchKey(problem.id));
       } catch {}
       const n = nextUnsolved(idx);
       if (n !== null) goto(n, { submitted: true });
@@ -195,12 +251,60 @@ export default function StudentApp({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [celebrate]);
 
+  // 손가락으로 옆으로 밀면 문항 넘기기 (왼쪽 → 다음, 오른쪽 → 이전). 펜슬·위아래 밀기는 그대로
+  // 미는 동안 화면이 손가락을 따라 움직이고, 놓으면 다음 문항이 옆에서 미끄러져 들어온다
+  const swipeRef = useRef<{ id: number; x: number; y: number; locked: boolean } | null>(null);
+  const [slide, setSlide] = useState({ x: 0, anim: false });
+  const swipeTarget = (dx: number) => {
+    const next = idx + (dx < 0 ? 1 : -1);
+    return next >= 0 && next < PROBLEMS.length ? next : null;
+  };
+  const onSwipeStart = (e: React.PointerEvent) => {
+    if (e.pointerType !== "touch" || swipeRef.current) return;
+    swipeRef.current = { id: e.pointerId, x: e.clientX, y: e.clientY, locked: false };
+  };
+  const onSwipeMove = (e: React.PointerEvent) => {
+    const st = swipeRef.current;
+    if (!st || st.id !== e.pointerId) return;
+    const dx = e.clientX - st.x;
+    const dy = e.clientY - st.y;
+    if (!st.locked) {
+      if (Math.abs(dy) > 16 && Math.abs(dy) > Math.abs(dx)) return void (swipeRef.current = null); // 위아래 밀기
+      if (Math.abs(dx) < 12) return;
+      st.locked = true;
+    }
+    // 넘길 문항이 없으면 살짝만 끌린다
+    setSlide({ x: swipeTarget(dx) === null ? dx * 0.25 : dx, anim: false });
+  };
+  const onSwipeEnd = (e: React.PointerEvent) => {
+    const st = swipeRef.current;
+    if (!st || st.id !== e.pointerId) return;
+    swipeRef.current = null;
+    if (!st.locked) return;
+    const dx = e.clientX - st.x;
+    const next = swipeTarget(dx);
+    if (e.type !== "pointerup" || Math.abs(dx) < 80 || next === null) return setSlide({ x: 0, anim: true });
+    const w = window.innerWidth;
+    setSlide({ x: dx < 0 ? -w : w, anim: true });
+    setTimeout(() => {
+      goto(next);
+      setSlide({ x: dx < 0 ? w * 0.35 : -w * 0.35, anim: false });
+      requestAnimationFrame(() => requestAnimationFrame(() => setSlide({ x: 0, anim: true })));
+    }, 180);
+  };
+  const undoActive = () => (activeRef.current === "pad" && twoPane ? pad : canvas).current?.undo();
+  const clearAll = () => {
+    if (!confirm("이 문항에 쓴 필기를 모두 지울까요?")) return;
+    canvas.current?.clear();
+    pad.current?.clear();
+  };
+
   const mm = Math.floor(elapsed / 60);
   const ss = String(elapsed % 60).padStart(2, "0");
 
   return (
     // 화면 높이에 딱 맞춤: 가로는 문제 | 필기 나란히, 세로는 문제(짧게) 위 · 필기 아래로 남은 높이를 채운다
-    <div className="flex h-[100dvh] flex-col">
+    <div className="flex h-[100dvh] flex-col overflow-x-hidden">
       {celebrate && <Celebration onDone={backToList} />}
       {/* 상단 바: 로고 · 과제 이름 · 자동 저장 · 나. 아이패드 앱에서는 통째로 숨기고 앱 상단 바를 쓴다 (lib/app.ts) */}
       <header data-app-hide className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-6 py-3">
@@ -283,55 +387,29 @@ export default function StudentApp({
         </div>
       </div>
 
-      {/* 본문 */}
-      {/* 가로·세로는 화면 너비가 아니라 실제 방향으로 (13인치 아이패드 세로도 위아래 배치) */}
-      <main className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-4 p-4 md:landscape:grid-cols-[minmax(300px,360px)_1fr] md:landscape:grid-rows-1 md:landscape:gap-5 md:landscape:p-5">
-        <section key={problem.id} className="problem-in flex max-h-[42dvh] flex-col gap-4 overflow-y-auto rounded-3xl border border-line bg-paper p-5 md:landscape:max-h-none md:landscape:p-6">
-          <div className="flex flex-col gap-1.5">
-            <div className="w-fit rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold tracking-[0.12em] text-muted">
-              QUESTION {String(idx + 1).padStart(2, "0")}
+      {/* 본문. 마감된 과제는 채점 결과 화면 (가로·세로는 화면 너비가 아니라 실제 방향으로) */}
+      {results ? (
+        <main className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-4 p-4 md:landscape:grid-cols-[minmax(300px,360px)_1fr] md:landscape:grid-rows-1 md:landscape:gap-5 md:landscape:p-5">
+          <section key={problem.id} className="problem-in flex max-h-[42dvh] flex-col gap-4 overflow-y-auto rounded-3xl border border-line bg-paper p-5 md:landscape:max-h-none md:landscape:p-6">
+            <div className="flex flex-col gap-1.5">
+              <div className="w-fit rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold tracking-[0.12em] text-muted">
+                QUESTION {String(idx + 1).padStart(2, "0")}
+              </div>
+              <h1 className="text-2xl font-extrabold">채점 결과를 볼까요?</h1>
             </div>
-            <h1 className="text-2xl font-extrabold">{results ? "채점 결과를 볼까요?" : "차근차근 풀어볼까요?"}</h1>
-            {!results && (
-              <p className="text-sm text-muted">
-                {problem.free ? "다음 문제를 풀고, 풀이 과정을 써 보세요." : "다음 일차방정식을 풀고, 풀이 과정을 써 보세요."}
-              </p>
+            <div
+              className={`whitespace-pre-wrap break-words rounded-2xl bg-sand px-4 ${
+                problem.free ? "py-5 text-left text-base leading-relaxed" : "py-10 text-center font-[family-name:var(--font-math)] text-4xl"
+              }`}
+            >
+              {problem.question}
+            </div>
+            {/* 문항 그림 (도형·좌표·그래프·입체도형 또는 선생님이 올린 그림) */}
+            {problem.figure && <FigureView figure={problem.figure} className="mx-auto" />}
+            {problem.concept && (
+              <span className="w-fit rounded-full bg-sand px-3 py-1 text-xs text-muted">{problem.concept}</span>
             )}
-          </div>
-          <div
-            className={`whitespace-pre-wrap break-words rounded-2xl bg-sand px-4 ${
-              problem.free ? "py-5 text-left text-base leading-relaxed" : "py-10 text-center font-[family-name:var(--font-math)] text-4xl"
-            }`}
-          >
-            <QuestionText text={problem.question} />
-          </div>
-          {/* 문항 그림 (도형·좌표·그래프·입체도형 또는 선생님이 올린 그림) */}
-          {problem.figure && <FigureView figure={problem.figure} className="mx-auto" />}
-          {problem.concept && (
-            <span className="w-fit rounded-full bg-sand px-3 py-1 text-xs text-muted">{problem.concept}</span>
-          )}
-          {results && <ResultCard key={problem.id} r={results[problem.id]} />}
-          {!results && done[problem.id] && (
-            <p className="rounded-2xl bg-sage-soft px-4 py-3 text-sm text-[#5d7a50]">
-              ✓ 제출한 풀이예요. 고쳐서 <b>다시 제출</b>할 수도 있어요.
-            </p>
-          )}
-          {!results && <p className="text-xs text-muted">
-            ✍️ 한 줄에 식 하나씩, 마지막 줄에 {problem.free ? <b>답</b> : <b className="font-[family-name:var(--font-math)] italic">x = □</b>} 까지 써 주세요.
-          </p>}
-
-          {/* 포스트잇 (세로 화면에선 필기 칸을 넓히려고 숨김) */}
-          {!results && <div className="relative mx-auto mt-auto hidden w-52 md:landscape:block rotate-[-3deg] rounded-sm bg-honey-soft px-5 pb-4 pt-6 shadow-[0_6px_14px_rgba(120,100,40,0.15)]">
-            <span className="absolute -top-2 left-1/2 h-5 w-16 -translate-x-1/2 rotate-2 bg-honey/70" />
-            <p className="font-[family-name:var(--font-hand)] text-2xl leading-tight text-ink">
-              천천히 풀어도
-              <br />
-              괜찮아.
-            </p>
-            <Chick size={56} pose="pencil" motion="bob" className="ml-auto -mt-2" />
-          </div>}
-
-          {results ? (
+            <ResultCard key={problem.id} r={results[problem.id]} />
             <div className="mt-auto flex items-center justify-between pt-2">
               <button
                 onClick={() => goto(idx - 1)}
@@ -348,52 +426,162 @@ export default function StudentApp({
                 다음 문항 →
               </button>
             </div>
-          ) : (
-          <div className="flex items-center justify-between pt-2">
-            <button
-              onClick={() => {
-                const n = nextUnsolved(idx);
-                if (n !== null) goto(n);
-              }}
-              className="flex items-center gap-1.5 rounded-full border border-line px-4 py-2 text-sm text-muted hover:bg-sand"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
-              나중에 풀기
-            </button>
-            <span className="text-xs text-muted">
-              ⏱ {mm}:{ss}
+          </section>
+
+          <section className="flex min-h-0 flex-col gap-2">
+            <MySolution key={problem.id} r={results[problem.id]} />
+          </section>
+        </main>
+      ) : (
+        // 풀이 화면: 위에 문제(그림 문제면 오른쪽에 그림 칸), 아래에 나의 풀이 (연습장 + 정리 풀이) · 답안 칸
+        // 문제 부분은 짧게(문제 글 옆에 그림 칸) 해서 나의 풀이 칸을 최대한 크게
+        <main
+          className="flex min-h-0 flex-1 flex-col gap-2 px-4 pb-3 pt-3 md:landscape:px-5"
+          onPointerDown={onSwipeStart}
+          onPointerMove={onSwipeMove}
+          onPointerUp={onSwipeEnd}
+          onPointerCancel={onSwipeEnd}
+          style={{
+            touchAction: "pan-y pinch-zoom", // 옆으로 미는 동작은 브라우저가 가져가지 않게 (문항 넘기기에 쓴다)
+            transform: slide.x ? `translateX(${slide.x}px)` : undefined,
+            transition: slide.anim ? "transform 0.26s cubic-bezier(0.22, 1, 0.36, 1)" : "none",
+          }}
+        >
+          {/* 문제 칸: 그림 문제를 두 칸으로 풀 때는 연습장에 문제 글·그림이 있으니 숨기고 풀이 칸을 위로 올린다 */}
+          {!(figure && twoPane) && (
+          <section key={problem.id} className="problem-in flex shrink-0 items-stretch gap-3">
+            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+              <div className="w-fit rounded-full border border-line px-3 py-0.5 text-[11px] font-bold tracking-[0.14em] text-olive">
+                QUESTION {String(idx + 1).padStart(2, "0")}
+              </div>
+              <div
+                className={`max-h-[15dvh] min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words rounded-[1.25rem] border border-line bg-paper px-4 py-2.5 ${
+                  problem.free ? "text-base leading-relaxed" : "font-[family-name:var(--font-math)] text-2xl"
+                }`}
+              >
+                <QuestionText text={problem.question} />
+              </div>
+            </div>
+          </section>
+          )}
+
+          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+            <span>
+              ✍️ 그림이나 계산은 <b className="text-ink">연습장</b>에 마음껏, 채점받을 풀이는 <b className="text-ink">정리 칸</b>에 한 줄씩 써 주세요.
+            </span>
+            {done[problem.id] && <span className="text-[#5d7a50]">✓ 제출한 풀이예요. 고쳐서 다시 제출할 수 있어요.</span>}
+            <span className="ml-auto flex items-center gap-3">
+              <button
+                onClick={() => {
+                  const n = nextUnsolved(idx);
+                  if (n !== null) goto(n);
+                }}
+                className="flex items-center gap-1.5 rounded-full border border-line px-3 py-1 text-xs text-muted"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+                나중에 풀기
+              </button>
+              <span className="text-xs">⏱ {mm}:{ss}</span>
             </span>
           </div>
-          )}
-        </section>
 
-        <section className="flex min-h-0 flex-col gap-2">
-          {results ? (
-            <MySolution key={problem.id} r={results[problem.id]} />
-          ) : (
-          <InkCanvas
-            ref={canvas}
-            initialStrokes={inkRef.current[problem.id]}
-            onChange={draftsLoaded ? saveDraft : undefined}
-            footerRight={
-              <button
-                onClick={submit}
-                disabled={sending || closed}
-                className="flex items-center gap-2 rounded-full bg-honey px-6 py-3.5 font-semibold text-ink shadow-sm transition hover:bg-honey-deep disabled:opacity-50"
-              >
-                {closed ? "마감된 과제예요" : sending ? "제출 중…" : done[problem.id] ? "다시 제출하기" : "풀이 제출하기"} {!closed && <span aria-hidden>→</span>}
+          <section className="flex min-h-0 flex-1 flex-col gap-2 rounded-[2rem] border border-line bg-paper/70 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-auto text-sm font-semibold text-muted">나의 풀이</span>
+              <div className="flex overflow-hidden rounded-full border border-line bg-paper text-sm">
+                {([false, true] as const).map((two) => (
+                  <button
+                    key={String(two)}
+                    onClick={() => setTwoPaneOf((m) => ({ ...m, [problem.id]: two }))}
+                    className={`px-4 py-2 font-semibold transition ${twoPane === two ? "bg-honey text-ink" : "text-muted"}`}
+                  >
+                    {two ? "그림 있는 문제" : "그림 없는 문제"}
+                  </button>
+                ))}
+              </div>
+              <button onClick={undoActive} className="rounded-full border border-line bg-paper px-4 py-2 text-sm font-semibold">
+                되돌리기
               </button>
-            }
-          />
-          )}
-          {!results && (
-            <p className="flex items-center gap-1.5 px-2 text-xs text-muted">
-              <Chick size={18} />
-              풀이 과정이 자동으로 기록되고 있어요.
-            </p>
-          )}
-        </section>
-      </main>
+              <button onClick={clearAll} className="rounded-full border border-line bg-paper px-4 py-2 text-sm font-semibold">
+                모두 지우기
+              </button>
+            </div>
+
+            {/* 두 칸: 가로 화면은 연습장 | 정리 풀이 나란히, 세로 화면은 위아래 */}
+            <div className={`grid min-h-0 flex-1 gap-3 ${twoPane ? "grid-rows-2 md:landscape:grid-cols-2 md:landscape:grid-rows-1" : "grid-rows-1"}`}>
+              <div className={`min-h-0 flex-col gap-1.5 ${twoPane ? "flex" : "hidden"}`}>
+                <div className="flex items-center justify-between px-1 text-sm">
+                  <b className="text-muted">연습장</b>
+                  <span className="font-semibold text-olive">AI는 채점하지 않아요</span>
+                </div>
+                <div className="min-h-0 flex-1">
+                  <InkCanvas
+                    ref={pad}
+                    variant="dots"
+                    tool={tool}
+                    color={color}
+                    thick={thick}
+                    backdrop={
+                      // 그림 문제: 연습장 위쪽에 문제 글과 그림을 깔아 두고 그 위에 그린다
+                      figure ? (
+                        <div className="flex flex-col gap-2">
+                          <span className="w-fit rounded-full border border-line bg-paper px-2.5 py-0.5 text-[10px] font-bold tracking-[0.14em] text-olive">
+                            QUESTION {String(idx + 1).padStart(2, "0")}
+                          </span>
+                          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-ink">
+                            <QuestionText text={problem.question} />
+                          </p>
+                          <FigureView figure={figure} />
+                        </div>
+                      ) : null
+                    }
+                    initialStrokes={scratchRef.current[problem.id]}
+                    onChange={draftsLoaded ? saveScratch : undefined}
+                    onActive={() => (activeRef.current = "pad")}
+                  />
+                </div>
+              </div>
+              <div className="flex min-h-0 flex-col gap-1.5">
+                <div className="flex items-center justify-between px-1 text-sm">
+                  <b className="text-muted">정리 풀이</b>
+                  <span className="font-semibold text-[#5d7a50]">이 칸만 위에서부터 읽어요</span>
+                </div>
+                <div className="min-h-0 flex-1">
+                  <InkCanvas
+                    ref={canvas}
+                    variant="lined"
+                    tool={tool}
+                    color={color}
+                    thick={thick}
+                    initialStrokes={inkRef.current[problem.id]}
+                    onChange={draftsLoaded ? saveDraft : undefined}
+                    onActive={() => (activeRef.current = "main")}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* 아래 줄: 도구 알약 · 답안 칸 · 제출. 한 줄에 안 들어가면 답안·제출이 다음 줄 전체 폭 */}
+            <div className="flex flex-wrap items-center gap-3">
+              <InkToolPill tool={tool} setTool={setTool} color={color} setColor={setColor} thick={thick} setThick={setThick} />
+              <div className="flex min-w-[22rem] flex-1 items-center gap-3">
+                <AnswerField problemId={problem.id} value={answer} onChange={saveAnswer} onSubmit={() => !sending && submit()} disabled={sending || closed} />
+                <button
+                  onClick={submit}
+                  disabled={sending || closed}
+                  className="flex h-[54px] shrink-0 items-center gap-2 rounded-full bg-honey px-6 font-semibold text-ink shadow-sm transition hover:bg-honey-deep disabled:opacity-50"
+                >
+                  {closed ? "마감된 과제예요" : sending ? "제출 중…" : done[problem.id] ? "다시 제출하기" : "풀이 제출하기"} {!closed && <span aria-hidden>→</span>}
+                </button>
+              </div>
+            </div>
+          </section>
+          <p className="flex shrink-0 items-center gap-1.5 px-2 text-xs text-muted">
+            <Chick size={18} />
+            풀이 과정이 자동으로 기록되고 있어요.
+          </p>
+        </main>
+      )}
     </div>
   );
 }
@@ -472,6 +660,15 @@ function ResultCard({ r }: { r: MyResult | undefined }) {
         </div>
         {ai?.answer && <div className="mt-1 text-muted">내 답으로 읽은 것: <span className="text-ink">{ai.answer}</span></div>}
       </div>
+
+      {r.answerText && (
+        <div className="rounded-2xl border border-line bg-paper px-4 py-3 text-sm">
+          <span className="text-muted">답안 칸에 쓴 답: </span>
+          <b className="font-[family-name:var(--font-math)]">{r.answerText}</b>
+          {r.answerCorrect === true && <span className="ml-2 font-semibold text-[#5d7a50]">✓ 정답과 같아요</span>}
+          {r.answerCorrect === false && <span className="ml-2 font-semibold text-[#b5624f]">✗ 정답과 달라요</span>}
+        </div>
+      )}
 
       {/* 틀렸을 때: 어디가 틀렸는지 (AI가 읽은 내 풀이에서 처음 틀린 줄 + 이유) */}
       {ai?.correct === false && (ai.reason || ai.lines.length > 0) && (

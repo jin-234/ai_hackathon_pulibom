@@ -127,7 +127,7 @@ async function conceptCandidates(grade: number, concept: string, basis: string[]
     question: it.question,
     answer: it.answer,
     concept,
-    why: it.doubt ? `⚠ 검산이 어긋났어요. 정답을 꼭 확인해 주세요 (${it.doubt})` : `풀이에서 틀린 '${concept}' 단계를 직접 연습하는 문항이에요.`,
+    why: `풀이에서 틀린 '${concept}' 단계를 직접 연습하는 문항이에요.`,
     source: "ai" as const,
     calc: true, // 풀이기로 못 푸니 AI 가 정하고 검산한 정답을 그대로 쓴다
     ...(it.figure ? { figure: it.figure } : {}),
