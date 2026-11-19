@@ -17,7 +17,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const to = ms(q.get("to"));
   const g = await requireOwnClass((await params).id, { write: false });
   if ("error" in g) return g.error;
-  const [assignments, roster, subs] = await Promise.all([listAssignments({ classIds: [g.cls.id] }), classMembers(g.cls.id), listSubmissions()]);
+  const [assignments, roster] = await Promise.all([listAssignments({ classIds: [g.cls.id] }), classMembers(g.cls.id)]);
+  // 풀이는 이 반 학생 것만 DB 에서 읽는다 (아래에서 이 반 과제 문항으로 한 번 더 거른다)
+  const subs = await listSubmissions({ studentIds: roster.map((s) => s.id) });
   // 문항 id → 문제 (예전 풀이는 문제 글이 저장돼 있지 않아 과제에서 채운다)
   const problems = new Map(assignments.filter((a) => a.published && (!only || a.id === only)).flatMap((a) => a.problems.map((p) => [p.id, p.question] as const)));
   const names = new Map(roster.map((s) => [s.id, s.name]));
