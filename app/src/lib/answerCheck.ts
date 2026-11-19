@@ -16,6 +16,9 @@ function normalize(s: string) {
     .replace(/[×✕·]/g, "*")
     .replace(/[−–—]/g, "-")
     .replace(/÷/g, "/")
+    .replace(/[ㅠᅲΠ]/g, "π") // 손글씨 π 가 'ㅠ' 로 읽힌 경우 (NFKC 를 거치면 ㅠ 가 ᅲ 로 바뀐다)
+    .replace(/(^|[^a-z])(pi|파이)(?![a-z])/g, "$1π")
+    .replace(/루트/g, "√")
     .replace(/(\d),(?=\d{3}(?!\d))/g, "$1"); // 천 단위 쉼표 (1,000원 = 1000원, 답 사이 쉼표가 아님)
 }
 
