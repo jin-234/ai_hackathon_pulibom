@@ -435,19 +435,15 @@ function answerOf(s: Submission) {
   }
 }
 
-// 답안 칸에 따로 쓴 최종 답 + 정답과 같은지 (제출할 때 서버가 바로 비교)
-function AnswerBox({ s }: { s: Submission }) {
-  if (!s.answerText)
-    return <div className="rounded-xl border border-dashed border-line px-3 py-2 text-xs text-muted">답안 칸: 비어 있어요</div>;
-  return (
-    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper px-3 py-2">
-      <span className="text-xs text-muted">학생 답</span>
-      <span className="break-words font-[family-name:var(--font-math)] text-lg font-bold text-ink">{s.answerText}</span>
-      {s.answerCorrect === true && <span className="rounded-full bg-sage-soft px-2 py-0.5 text-xs font-semibold text-[#5d7a50]">✓ 정답과 같음</span>}
-      {s.answerCorrect === false && <span className="rounded-full bg-salmon-soft px-2 py-0.5 text-xs font-semibold text-[#b5624f]">✗ 정답과 다름</span>}
-      {answerOf(s) && <span className="ml-auto text-xs text-muted">정답 <b className="font-[family-name:var(--font-math)] text-ink">{answerOf(s)}</b></span>}
-    </div>
-  );
+// 학생 답: 답안 칸에 쓴 답이 먼저 (맞음·틀림은 제출할 때 서버가 정답과 비교한 값, 학생 화면과 같은 기준).
+//  답안 칸이 비었으면 풀이 끝에서 AI 가 읽은 답과 AI 채점.
+//  둘 다 있는데 다르면 풀이 끝 답도 같이 보여 준다 (풀이에서 구한 값과 다른 답을 옮겨 쓰는 실수를 놓치지 않게)
+const sameAnswer = (x: string, y: string) => x.replace(/\s/g, "").toLowerCase() === y.replace(/\s/g, "").toLowerCase();
+function studentAnswerOf(s: Submission) {
+  const fromLines = s.analysis?.recognizedAnswer ?? null;
+  if (s.answerText)
+    return { text: s.answerText, correct: s.answerCorrect ?? s.analysis?.correct ?? null, note: fromLines && !sameAnswer(fromLines, s.answerText) ? `풀이 끝에 쓴 답: ${fromLines}` : null };
+  return { text: fromLines, correct: s.analysis?.correct ?? null, note: fromLines ? "답안 칸이 비어 풀이 끝에서 읽었어요" : null };
 }
 
 const STATUS: Record<Submission["status"], { label: string; cls: string }> = {
@@ -472,6 +468,7 @@ export function SubmissionCard({
   const problem = getProblem(s.problemId);
   const stats = inkStats(s);
   const a = s.analysis;
+  const ans = studentAnswerOf(s);
   const [memo, setMemo] = useState(s.teacher?.memo ?? "");
   const [errorType, setErrorType] = useState<ErrorType>(s.teacher?.errorType ?? a?.errorType ?? "NONE");
 
@@ -532,18 +529,18 @@ export function SubmissionCard({
           </div>
           <div
             className={`rounded-xl border px-3 py-2 ${
-              a?.correct === true ? "border-sage/40 bg-sage-soft" : a?.correct === false ? "border-[#b5624f]/30 bg-salmon-soft" : "border-line bg-sand"
+              ans.correct === true ? "border-sage/40 bg-sage-soft" : ans.correct === false ? "border-[#b5624f]/30 bg-salmon-soft" : "border-line bg-sand"
             }`}
           >
             <div className="text-xs text-muted">
-              풀이 끝의 답{a?.correct === true ? " · 맞음" : a?.correct === false ? " · 틀림" : ""}
+              학생 답{ans.correct === true ? " · 맞음" : ans.correct === false ? " · 틀림" : ""}
             </div>
-            <div className={`break-words text-lg font-bold ${a?.correct === true ? "text-[#5d7a50]" : a?.correct === false ? "text-[#b5624f]" : "text-ink"}`}>
-              {a?.recognizedAnswer ?? (s.status === "pending" ? "인식 중" : "-")}
+            <div className={`break-words text-lg font-bold ${ans.correct === true ? "text-[#5d7a50]" : ans.correct === false ? "text-[#b5624f]" : "text-ink"}`}>
+              {ans.text ?? (s.status === "pending" ? "인식 중" : "-")}
             </div>
+            {ans.note && <div className="mt-0.5 text-xs text-muted">{ans.note}</div>}
           </div>
         </div>
-        <AnswerBox s={s} />
         {imageMissing ? (
           <div className="rounded-xl border border-dashed border-line p-6 text-center text-xs text-muted">원본 풀이 이미지가 없어요.</div>
         ) : (
