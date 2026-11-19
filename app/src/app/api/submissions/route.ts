@@ -38,6 +38,7 @@ type Body = {
   events: InkEvent[];
   imageDataUrl: string; // data:image/png;base64,...
   answerText?: string; // 답안 칸에 쓴 최종 답
+  scratch?: { strokes: Stroke[]; imageDataUrl: string }; // 연습장 (AI 는 읽지 않고 선생님만 본다)
 };
 
 // 학생 풀이 제출 → 저장 → (백그라운드) OCR + 분석
@@ -75,7 +76,10 @@ export async function POST(req: Request) {
     ...(answerText ? { answerText } : {}),
     answerCorrect: checkAnswer(answerText, problem.answer),
   };
-  await saveSubmission(submission, png);
+  const scratch = body.scratch?.strokes?.length
+    ? { strokes: body.scratch.strokes, png: Buffer.from(body.scratch.imageDataUrl.replace(/^data:image\/png;base64,/, ""), "base64") }
+    : undefined;
+  await saveSubmission(submission, png, scratch);
 
   // 응답은 바로 돌려주고 분석은 뒤에서 진행 (교사 화면에서 '분석 중' 표시)
   void runPipeline(submission, png);

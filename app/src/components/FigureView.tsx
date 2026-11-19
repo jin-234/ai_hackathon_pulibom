@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { compileExpr, type Figure, type GeoFigure, type SolidFigure } from "@/lib/figure";
 
 // 문항 그림: 설계도(lib/figure.ts)를 SVG 로 그린다. 길이·각은 좌표 그대로라 수학적으로 정확하다
@@ -45,6 +46,7 @@ function Label({ at, children, anchor = "middle" }: { at: XY; children: string; 
 
 // ── 평면도형·좌표평면·그래프 ──
 function Geo({ f }: { f: GeoFigure }) {
+  const uid = useId(); // 잘라내기 영역 이름: 서버·브라우저가 같은 값을 쓰게 (Math.random 이면 화면이 어긋났다는 경고가 뜬다)
   const pts = new Map((f.points ?? []).map((p) => [p.name, p]));
   // 수학 좌표 범위
   let x0: number, x1: number, y0: number, y1: number;
@@ -76,7 +78,7 @@ function Geo({ f }: { f: GeoFigure }) {
   // 이름·길이 표시를 밀어낼 기준: 도형 점들의 가운데 (좌표평면이면 각 점을 원점 반대쪽 위로)
   const named = [...pts.values()];
   const center = named.length ? to(named.reduce((a, p) => a + p.x, 0) / named.length, named.reduce((a, p) => a + p.y, 0) / named.length) : to(0, 0);
-  const clip = `clip-${Math.random().toString(36).slice(2, 8)}`;
+  const clip = `clip-${uid.replace(/[^\w-]/g, "")}`;
   const box = { l: PAD, r: PAD + (x1 - x0) * s, t: PAD, b: PAD + (y1 - y0) * s };
 
   return (
