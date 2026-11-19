@@ -63,9 +63,24 @@ export function variableOf(problem: { question: string; answer: string }): strin
 //  - 보정 단계가 글자를 고쳐야 했음 ('27c' → '2x'), 보정 뒤에도 '?' 가 남음, OCR 신뢰도가 낮음
 //  - 분석은 끝났는데 OCR 이 아무것도 못 읽음 (nothingRead)
 // OCR 줄에 나와도 되는 글자 (이 밖의 글자: つ·次 등 → 글씨를 잘못 읽은 것)
-export const OCR_ALLOWED = /^[0-9a-zA-Z가-힣ㄱ-ㅎㅏ-ㅣ+\-=().,/×÷²³π√%:|<>≤≥'\s]*$/;
+//  고등 수식 기호도 넣는다: 거듭제곱 ^ · 아래첨자 _ ₀~₉ · 위첨자 ⁰~⁹ · θ α β γ · Σ ∫ ∞ → · 집합 { } ∈ ∪ ∩ ⊂ · ! ± ≠ [ ]
+export const OCR_ALLOWED = /^[0-9a-zA-Z가-힣ㄱ-ㅎㅏ-ㅣ+\-=().,/×÷²³π√%:|<>≤≥'\s^_₀-₉⁰-⁹θαβγΣ∑∫∞→{}[\]∈∪∩⊂!±≠·]*$/;
 const ALLOWED = OCR_ALLOWED;
 const UNITS = ["cm", "mm", "km", "m", "kg", "g", "L", "mL", "ml"];
+// 수식에 나오는 함수·기호 이름 (log₂, sin, lim, ∫ … dx)
+const MATH_WORDS = new Set(["log", "ln", "sin", "cos", "tan", "lim", "sqrt", "max", "min", "dx", "dy", "dt"]);
+// 미지수·단위·수식 이름도 아니고 문제에도 없는 영문자가 있는지 ('JC', '7c': 글씨를 잘못 읽은 흔적).
+//  문제에 나온 글자는 괜찮다 (고등 문항의 a_n, S_n, k, f(x), 5C2 의 C 등). question 을 모르면 미지수만 본다
+export function strayLetters(line: string, v: string, question = "") {
+  const inQuestion = new Set((question.match(/[a-zA-Z]/g) ?? []).map((c) => c));
+  const ok = (c: string) => c === v || c.toLowerCase() === v || inQuestion.has(c);
+  return (line.match(/[a-zA-Z]+/g) ?? []).some((w) => {
+    if (UNITS.includes(w) || MATH_WORDS.has(w.toLowerCase())) return false;
+    // OCR 이 붙여 읽은 것 ('log212', 'sin2θ' → 'log', 'sin') 은 앞쪽이 수식 이름이면 괜찮다
+    if ([...MATH_WORDS].some((m) => w.toLowerCase().startsWith(m) && [...w.slice(m.length)].every(ok))) return false;
+    return ![...w].every(ok);
+  });
+}
 // 숫자끼리 "2=4" 처럼 성립하지 않는 등식 (x 를 숫자로 잘못 읽은 흔적)
 export function falseNumberEquation(line: string) {
   const m = line.replace(/\s/g, "").match(/^(-?\d+(?:\.\d+)?(?:\/\d+)?)=(-?\d+(?:\.\d+)?(?:\/\d+)?)$/);
@@ -78,16 +93,15 @@ export function handwritingIssue(
 ): { lines: number[]; nothingRead: boolean } {
   const v = variableOf({ question: s.question ?? "", answer: "" });
   const norm = (l: string) => l.replace(/\s/g, "").replace(/[×✕χX]/g, "x");
-  const strayLetters = (l: string) =>
-    (l.match(/[a-zA-Z]+/g) ?? []).some((w) => !(w === v || w.toLowerCase() === v) && !UNITS.includes(w));
+  const stray = (l: string) => strayLetters(l, v, s.question ?? "");
   const lines = s.ocrLines
     .map((raw, i) => {
       const fixed = s.analysis?.correctedLines?.[i] ?? raw;
       // AI 가 다시 읽은 풀이: OCR 신뢰도·보정 차이는 보지 않고, AI 도 못 읽은 흔적(?, 이상한 글자)만 글씨체 문제로
-      if (s.visionRead) return fixed.includes("?") || raw.includes("?") || !ALLOWED.test(raw) || strayLetters(raw) ? i : -1;
+      if (s.visionRead) return fixed.includes("?") || raw.includes("?") || !ALLOWED.test(raw) || stray(raw) ? i : -1;
       const odd =
         !ALLOWED.test(raw) ||
-        strayLetters(raw) ||
+        stray(raw) ||
         falseNumberEquation(fixed) ||
         fixed.includes("?") ||
         (s.ocrConfidence?.[i] ?? 1) < LOW_OCR_CONFIDENCE ||
@@ -270,7 +284,7 @@ export function statusOf(a: Pick<Assignment, "published" | "closedAt" | "dueAt">
 }
 
 export function formatDue(ms: number) {
-  return new Date(ms).toLocaleString("ko-KR", { month: "numeric", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" });
+  return new Date(ms).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 // ── 학급 대시보드용 학생별 지표 ──────────────────────────

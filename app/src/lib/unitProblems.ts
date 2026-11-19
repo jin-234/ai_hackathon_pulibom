@@ -1,4 +1,5 @@
 import { chat } from "./ai";
+import { parseAiJson } from "./aiJson";
 import { findLesson, gradeName } from "./curriculum";
 import { compileExpr, describeFigure, FIGURE_PROMPT, sanitizeFigure, type Figure } from "./figure";
 import { solveLinear } from "./equation";
@@ -137,7 +138,9 @@ ${FIGURE_PROMPT}
 문항 ${count + 2}개를 만들어라.${retry ? "\n앞에서 만든 문항과 겹치지 않게, 조건이 모순되지 않고 학년 범위 안인 문항만." : ""}`;
   let parsed: { items?: { question?: unknown; answer?: unknown; solution?: unknown; checks?: unknown; figure?: unknown }[] };
   try {
-    parsed = JSON.parse((await chat(system, user, 0.7)).match(/\{[\s\S]*\}/)?.[0] ?? "{}");
+    const got = parseAiJson<typeof parsed>(await chat(system, user, 0.7));
+    if (!got) throw new Error("응답에서 JSON 을 찾지 못함");
+    parsed = got;
   } catch (e) {
     throw new Error(`AI가 문항을 만들지 못했어요. 잠시 후 다시 시도해 주세요. (${(e as Error).message.slice(0, 80)})`);
   }
@@ -213,7 +216,7 @@ async function crossCheck(grade: number, items: UnitItem[]) {
   // 그림은 글로 바꿔 함께 준다 (좌표·길이를 보고 풀 수 있게)
   const user = items.map((it, i) => `${i + 1}. ${it.question}${it.figure ? `\n   [그림] ${describeFigure(it.figure)}` : ""}`).join("\n");
   try {
-    const parsed = JSON.parse((await chat(system, user, 0)).match(/\{[\s\S]*\}/)?.[0] ?? "{}") as {
+    const parsed = (parseAiJson(await chat(system, user, 0)) ?? {}) as {
       results?: { no?: unknown; answer?: unknown; problem?: unknown }[];
     };
     for (const r of parsed.results ?? []) {

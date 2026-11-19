@@ -20,7 +20,7 @@ export async function POST(req: Request) {
   const found = await findProblemWithAssignment(body.problemId);
   if (!found) return NextResponse.json({ error: "알 수 없는 문항" }, { status: 400 });
   try {
-    const ocr = await ocrFromStrokes(body.strokes.slice(0, MAX_STROKES), variableOf(found.problem));
+    const ocr = await ocrFromStrokes(body.strokes.slice(0, MAX_STROKES), variableOf(found.problem), { question: found.problem.question });
     return NextResponse.json({ text: (ocr?.lines ?? []).join(" ").trim() });
   } catch {
     return NextResponse.json({ error: "글씨를 못 읽었어요. 다시 쓰거나 터치해서 입력해 주세요." }, { status: 502 });

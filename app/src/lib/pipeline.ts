@@ -5,36 +5,53 @@ import { ocrFromStrokes } from "./ocrImage";
 import { updateSubmission } from "./store";
 import { inkStats, type Submission } from "./types";
 
+// 분석 전체 시간 제한: Vercel 함수 한도(300초)보다 먼저 '오류'로 바꿔 둔다 (함수가 끊기면 '분석 중'에 멈춰 버리므로)
+const DEADLINE_MS = 270000;
+
 // 제출 1건 분석: OCR용 이미지 렌더링 → 업스테이지 OCR → (확신 없으면) Claude 다시 읽기 → Solar 보정·채점 → 저장
 export async function runPipeline(s: Submission, png: Buffer) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("분석이 너무 오래 걸려 멈췄어요. ↻ 다시 를 눌러 주세요.")), DEADLINE_MS);
+  });
+  const job = analyze(s, png);
+  job.catch(() => {}); // 시간 제한 뒤에 늦게 실패한 것은 이미 오류로 바꿔 뒀다
   try {
-    if (!hasUpstageKey()) {
-      await updateSubmission(s.id, { status: "error", statusMessage: "UPSTAGE_API_KEY 가 .env 에 없습니다." });
-      return;
-    }
-    const [problem, grade] = await Promise.all([findProblem(s.problemId), getStudentGrade(s.studentId).catch(() => null)]);
-    if (!problem) throw new Error("문항을 찾을 수 없어요 (과제가 삭제됨).");
-    // 획 기록으로 OCR 전용 이미지를 다시 그린다 (획이 없으면 원본 PNG)
-    const v = variableOf(problem); // 미지수 글자 (x 가 아닌 y·a·b·m·n·i 문항도 그 글자로 읽고 보정)
-    const ocr = (await ocrFromStrokes(s.strokes, v)) ?? { ...(await runOcr(png, undefined, v)), fractions: undefined, marks: [] };
-    const { lines, confidences, raw } = ocr;
-    await updateSubmission(s.id, { ocrLines: lines, ocrConfidence: confidences, ocrRaw: raw });
-    const stats = inkStats(s);
-    const analysis = await analyzeSolution({
-      problem,
-      ocrLines: lines,
-      ocrConfidence: confidences,
-      ocrFractions: ocr.fractions,
-      ocrMarks: ocr.marks,
-      durationSec: stats.durationSec,
-      erases: stats.erases,
-      grade,
-    });
-    await updateSubmission(s.id, {
-      analysis,
-      status: analysis.needsReview ? "needs_review" : "done",
-    });
+    await Promise.race([job, deadline]);
   } catch (e) {
     await updateSubmission(s.id, { status: "error", statusMessage: (e as Error).message });
+  } finally {
+    clearTimeout(timer);
   }
 }
+
+async function analyze(s: Submission, png: Buffer) {
+  if (!hasUpstageKey()) {
+    await updateSubmission(s.id, { status: "error", statusMessage: "UPSTAGE_API_KEY 가 .env 에 없습니다." });
+    return;
+  }
+  const [problem, grade] = await Promise.all([findProblem(s.problemId), getStudentGrade(s.studentId).catch(() => null)]);
+  if (!problem) throw new Error("문항을 찾을 수 없어요 (과제가 삭제됨).");
+  // 획 기록으로 OCR 전용 이미지를 다시 그린다 (획이 없으면 원본 PNG)
+  const v = variableOf(problem); // 미지수 글자 (x 가 아닌 y·a·b·m·n·i 문항도 그 글자로 읽고 보정)
+  const ocr = (await ocrFromStrokes(s.strokes, v, { question: problem.question })) ?? { ...(await runOcr(png, undefined, v)), fractions: undefined, marks: [] };
+  const { lines, confidences, raw } = ocr;
+  await updateSubmission(s.id, { ocrLines: lines, ocrConfidence: confidences, ocrRaw: raw });
+  const stats = inkStats(s);
+  const analysis = await analyzeSolution({
+    problem,
+    ocrLines: lines,
+    ocrConfidence: confidences,
+    ocrFractions: ocr.fractions,
+    ocrMarks: ocr.marks,
+    durationSec: stats.durationSec,
+    erases: stats.erases,
+    grade,
+    ...(s.answerText ? { answerText: s.answerText } : {}),
+  });
+  await updateSubmission(s.id, {
+    analysis,
+    status: analysis.needsReview ? "needs_review" : "done",
+  });
+}
+
