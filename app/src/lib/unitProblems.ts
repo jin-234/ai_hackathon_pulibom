@@ -4,6 +4,7 @@ import { findLesson, gradeName } from "./curriculum";
 import { compileExpr, describeFigure, FIGURE_PROMPT, sanitizeFigure, type Figure } from "./figure";
 import { solveLinear } from "./equation";
 import { generateFromTemplate, listTemplates } from "./problemBank";
+import { splitChoices } from "@/components/QuestionText";
 
 // 교육과정 소단원에 맞춰 출제할 문항 초안 (저장하지 않고 교사 확인용으로 돌려준다)
 //  bank: 그 소단원의 문제은행 틀에서 쉬운 것부터 돌아가며 숫자를 바꿔 생성 (정답은 풀이기로 검증)
@@ -21,6 +22,31 @@ export type UnitItem = {
   reject?: string; // 버릴 문항: 조건 모순·학년 범위 밖·검산 불일치 (교사에게 보내지 않음)
   figure?: Figure; // 문항 그림 (좌표·치수가 검사를 통과한 것만)
 };
+
+// 문항 유형: 객관식(① ~ ⑤ 보기 중 하나를 고름) / 서술형(풀이를 쓰고 답을 직접 씀). 교사가 출제할 때 고른다
+export type QuestionType = "choice" | "written";
+const CHOICE_MARK = /^[①-⑩]/;
+
+const MARKS = "①②③④⑤⑥⑦⑧⑨⑩";
+
+// 유형에 맞지 않는 문항은 버린다. 객관식은 보기 4~5개에 정답 보기가 그중 하나여야 한다.
+//  AI 는 정답을 ① 에 두는 일이 많아서 보기 순서를 섞고 번호를 다시 붙인다. 정답은 보기 전체("③ (x - 2)(x + 2)")
+function checkType(type: QuestionType | undefined, it: UnitItem): string | null {
+  const { stem, choices } = splitChoices(it.question);
+  if (type === "written") return choices.length ? "서술형인데 보기가 있음" : null;
+  if (type !== "choice") return null;
+  if (choices.length < 4 || choices.length > 5) return `객관식 보기가 ${choices.length}개`;
+  const mark = it.answer.trim().match(CHOICE_MARK)?.[0];
+  const at = mark ? choices.findIndex((c) => c.startsWith(mark)) : -1;
+  if (at < 0) return "객관식 정답이 보기 번호가 아님";
+  const bodies = choices.map((c) => c.slice(1).trim());
+  if (new Set(bodies).size !== bodies.length) return "객관식 보기가 겹침";
+  const order = bodies.map((_, i) => i).sort(() => Math.random() - 0.5);
+  const shuffled = order.map((i, k) => `${MARKS[k]} ${bodies[i]}`);
+  it.question = `${stem} ${shuffled.join(" ")}`;
+  it.answer = shuffled[order.indexOf(at)];
+  return null;
+}
 
 // 학년별로 아직 배우지 않은 내용 (2022 개정). AI 가 자주 넘어가는 것만 적는다
 const NOT_YET: Record<number, string> = {
@@ -41,11 +67,13 @@ function outOfScope(grade: number, it: { question: string; answer: string; solut
   return null;
 }
 
-export async function draftUnitProblems(grade: number, lessonId: string, count: number, mode: "bank" | "ai"): Promise<UnitItem[]> {
+export async function draftUnitProblems(grade: number, lessonId: string, count: number, mode: "bank" | "ai", type: QuestionType = "written"): Promise<UnitItem[]> {
   const found = findLesson(grade, lessonId);
   if (!found) throw new Error("이 학년 교육과정에 없는 단원이에요.");
   const { unit, lesson } = found;
-  return mode === "bank" ? fromBank(lesson.templates ?? [], lesson.name, count) : fromAi(grade, unit.name, lesson.name, lesson.desc, count);
+  // 문제은행 틀은 모두 답을 직접 쓰는 문항이라 객관식은 AI 로 만든다
+  if (mode === "bank" && type === "choice") throw new Error("문제은행은 서술형만 만들 수 있어요. 객관식은 AI로 만들어 주세요.");
+  return mode === "bank" ? fromBank(lesson.templates ?? [], lesson.name, count) : fromAi(grade, unit.name, lesson.name, lesson.desc, count, "", type);
 }
 
 async function fromBank(ids: string[], concept: string, count: number): Promise<UnitItem[]> {
@@ -78,7 +106,7 @@ ${opts.basis.join("\n") || "(없음)"}
   return fromAi(opts.grade, "보충 학습", opts.concept, `학생이 풀이에서 틀린 '${opts.concept}' 단계`, opts.count, focus);
 }
 
-async function fromAi(grade: number, unitName: string, lessonName: string, desc: string, count: number, focus = ""): Promise<UnitItem[]> {
+async function fromAi(grade: number, unitName: string, lessonName: string, desc: string, count: number, focus = "", type?: QuestionType): Promise<UnitItem[]> {
   // 버린 문항 때문에 모자라면 새로 더 만든다 (최대 3번)
   const items: UnitItem[] = [];
   const seen = new Set<string>();
@@ -87,7 +115,7 @@ async function fromAi(grade: number, unitName: string, lessonName: string, desc:
   for (let round = 0; round < 3; round++) {
     let got: UnitItem[];
     try {
-      got = await aiRound(grade, unitName, lessonName, desc, count, seen, round > 0, focus);
+      got = await aiRound(grade, unitName, lessonName, desc, count, seen, round > 0, focus, type);
     } catch (e) {
       failed = e as Error;
       continue;
@@ -99,8 +127,27 @@ async function fromAi(grade: number, unitName: string, lessonName: string, desc:
   return items.slice(0, count);
 }
 
-async function aiRound(grade: number, unitName: string, lessonName: string, desc: string, count: number, seen: Set<string>, retry: boolean, focus = ""): Promise<UnitItem[]> {
+async function aiRound(
+  grade: number,
+  unitName: string,
+  lessonName: string,
+  desc: string,
+  count: number,
+  seen: Set<string>,
+  retry: boolean,
+  focus = "",
+  type?: QuestionType,
+): Promise<UnitItem[]> {
   const notYet = NOT_YET[grade] ?? "";
+  const choiceFormat = `보기를 ① ② ③ ④ ⑤ 기호로 번호를 붙여 question 끝에 쓴다 (화면이 보기마다 줄을 나눈다). 1) 2) 나 (가) (나), ㄱ ㄴ 으로 번호를 붙이지 않는다.
+  예: "다음 중 x^2 - 4 를 인수분해한 것은? ① (x - 2)^2 ② (x + 2)^2 ③ (x - 2)(x + 2) ④ (x - 4)(x + 1) ⑤ x(x - 4)"
+  객관식 정답은 번호와 내용을 함께 쓴다 (예: "③ (x - 2)(x + 2)"). 검산식(checks)은 정답 보기의 값으로 쓴다.`;
+  const typeRule: Record<QuestionType | "any", string> = {
+    any: `- 객관식으로 낼 때는 ${choiceFormat}`,
+    choice: `- 모든 문항을 5지선다 객관식으로 낸다. ${choiceFormat}
+  정답 보기는 꼭 하나만. 오답 보기는 학생이 자주 하는 실수(부호, 계산, 공식 착각)로 나오는 값으로 만들고, 보기끼리 겹치지 않게 한다.`,
+    written: `- 모든 문항을 서술형으로 낸다: 학생이 풀이 과정을 쓰고 답을 직접 쓰는 문항. ① ② ③ 같은 보기를 쓰지 않는다.`,
+  };
   const system = `너는 ${gradeName(grade)} 수학 교사를 돕는 출제 도우미다. 2022 개정 교육과정 범위 안에서 학생이 손으로 풀이를 쓰는 과제 문항을 만든다.
 규칙:
 - 주어진 소단원 학습 내용 안에서만 낸다. 다음 학년 내용은 쓰지 않는다.${notYet ? `\n- ${gradeName(grade)}은 아직 다음을 배우지 않았다. 문제·정답·풀이 어디에도 쓰지 않는다: ${notYet}.` : ""}
@@ -109,9 +156,7 @@ async function aiRound(grade: number, unitName: string, lessonName: string, desc
 - 첫 문항은 쉽게, 뒤로 갈수록 조금씩 어렵게. 같은 유형만 반복하지 않는다.
 - 정답을 먼저 깔끔한 수로 정하고, 그 정답이 나오도록 거꾸로 조건을 만든다. 다 만든 뒤 정답을 문제 조건에 대입해 맞는지 확인한다.
 - 정답은 짧게 (예: "x = 4", "12", "6π cm²"). 정답이 하나로 정해지는 문제만.
-- 객관식으로 낼 때는 보기를 ① ② ③ ④ ⑤ 기호로 번호를 붙여 question 끝에 쓴다 (화면이 보기마다 줄을 나눈다). 1) 2) 나 (가) (나), ㄱ ㄴ 으로 번호를 붙이지 않는다.
-  예: "다음 중 x^2 - 4 를 인수분해한 것은? ① (x - 2)^2 ② (x + 2)^2 ③ (x - 2)(x + 2) ④ (x - 4)(x + 1) ⑤ x(x - 4)"
-  객관식 정답은 번호와 내용을 함께 쓴다 (예: "③ (x - 2)(x + 2)"). 검산식(checks)은 정답 보기의 값으로 쓴다.
+${typeRule[type ?? "any"]}
 - solution 은 풀이 단계를 2~5줄로, 한 줄에 한 단계.
 - checks 에는 정답을 문제의 조건에 대입한 검산식을 숫자로만 쓴다. 양변을 == 로 비교하고, 쓸 수 있는 것은 숫자, + - * / ^, 괄호, pi, sqrt( ) 뿐이다.
   예: 동전 문제 정답 12개 → "100*12 + 500*(20-12) == 5200", 부채꼴 넓이 50π/3 → "pi*10^2*60/360 == 50*pi/3". 조건마다 하나씩.
@@ -154,8 +199,9 @@ ${FIGURE_PROMPT}
     let answer = String(it.answer ?? "").trim();
     let solution = Array.isArray(it.solution) ? it.solution.map(String).filter(Boolean) : [];
     // 식만 있는 일차방정식이면 풀이기 정답·해설로 바꾼다 (AI 계산 실수 방지)
+    // 보기가 붙은 객관식 문제 글은 풀이기에 넣지 않는다 (정답이 보기 번호여야 해서)
     let checked = false;
-    try {
+    if (!splitChoices(question).choices.length) try {
       const s = solveLinear(question);
       answer = s.answer;
       solution = s.steps;
@@ -176,6 +222,12 @@ ${FIGURE_PROMPT}
       }
     } else if (/그림과\s*같이|그림에서|아래\s*그림/.test(question)) {
       item.reject = "그림을 가리키는데 그림이 없음";
+      items.push(item);
+      continue;
+    }
+    const wrongType = checkType(type, item);
+    if (wrongType) {
+      item.reject = wrongType;
       items.push(item);
       continue;
     }
@@ -209,15 +261,16 @@ async function crossCheck(grade: number, items: UnitItem[]) {
   const system = `너는 ${gradeName(grade)} 수학 문제를 처음 보는 학생처럼 직접 푸는 검산 도우미다.
 규칙:
 - 각 문제를 처음부터 식을 세워 직접 계산한다. 계산 과정을 work 에 짧게 쓰고, 마지막에 구한 답을 answer 에 쓴다.
+- 보기(① ~ ⑤)가 있는 객관식은 보기를 하나씩 모두 확인해서 맞는 보기 번호를 전부 correct 에 쓰고 (예: ["③"]), answer 에 고른 보기의 번호와 내용을 쓴다 (예: "③ (x - 2)(x + 2)").
 - 구한 답을 문제의 모든 조건에 다시 대입해 확인한다. 조건이 서로 맞지 않거나 답이 없거나 여러 개면 problem 에 이유를 쓴다 (문제없으면 빈 문자열).
 - 도형·입체도형은 주어진 길이끼리 맞는지도 본다 (예: 높이 8 cm 인 사각뿔의 옆면의 높이가 5 cm 이면 모순: 옆면의 높이는 높이보다 길어야 한다. 원뿔은 모선² = 높이² + 반지름²).
 - ${gradeName(grade)}이 아직 배우지 않은 내용${NOT_YET[grade] ? ` (${NOT_YET[grade]})` : ""}이 있어야 풀리면 problem 에 "학년 범위 밖: 이유"를 쓴다.
-- JSON만 출력: {"results": [{"no": 1, "work": "...", "answer": "...", "problem": ""}]}`;
+- JSON만 출력: {"results": [{"no": 1, "work": "...", "answer": "...", "correct": ["③"] (객관식만), "problem": ""}]}`;
   // 그림은 글로 바꿔 함께 준다 (좌표·길이를 보고 풀 수 있게)
   const user = items.map((it, i) => `${i + 1}. ${it.question}${it.figure ? `\n   [그림] ${describeFigure(it.figure)}` : ""}`).join("\n");
   try {
     const parsed = (parseAiJson(await chat(system, user, 0)) ?? {}) as {
-      results?: { no?: unknown; answer?: unknown; problem?: unknown }[];
+      results?: { no?: unknown; answer?: unknown; correct?: unknown; problem?: unknown }[];
     };
     for (const r of parsed.results ?? []) {
       const it = items[Number(r.no) - 1];
@@ -225,7 +278,13 @@ async function crossCheck(grade: number, items: UnitItem[]) {
       const theirs = String(r.answer ?? "");
       // 조건 모순·학년 범위 밖은 교사에게 보내지 않고 버린다
       if (String(r.problem ?? "").trim()) it.reject = String(r.problem).trim();
-      else if (sameNumbers(it.answer, theirs) === false) it.reject = `검산 불일치: 다시 풀어 보니 ${theirs}`;
+      else if (CHOICE_MARK.test(it.answer)) {
+        // 객관식: 고른 보기 번호로 비교 (번호 없이 답만 썼으면 숫자로)
+        const correct = Array.isArray(r.correct) ? [...new Set(r.correct.map((c) => String(c).trim()[0]).filter((c) => MARKS.includes(c)))] : [];
+        const mark = theirs.trim().match(CHOICE_MARK)?.[0];
+        if (correct.length > 1) it.reject = `정답 보기가 여러 개: ${correct.join(" ")}`;
+        else if (mark ? mark !== it.answer[0] : sameNumbers(it.answer.slice(1), theirs) === false) it.reject = `검산 불일치: 다시 풀어 보니 ${theirs}`;
+      } else if (sameNumbers(it.answer, theirs) === false) it.reject = `검산 불일치: 다시 풀어 보니 ${theirs}`;
     }
   } catch {
     // 검산 호출이 실패하면 표시 없이 둔다 (AI 초안 확인 안내는 그대로)
