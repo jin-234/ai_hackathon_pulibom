@@ -7,7 +7,7 @@ import type { Submission } from "@/lib/types";
 type Item = Submission & { studentName: string };
 
 const REASON: Partial<Record<Submission["status"], { label: string; cls: string }>> = {
-  needs_review: { label: "판독 어려움", cls: "bg-salmon-soft text-[#b5624f]" },
+  needs_review: { label: "판독 어려움", cls: "bg-honey text-ink" },
   error: { label: "AI 분석 실패", cls: "bg-sand text-ink" },
 };
 

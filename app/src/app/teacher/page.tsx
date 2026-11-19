@@ -553,7 +553,7 @@ function StudentTable({
                         onOpen(s.id, { tab: "subs", filter: "review" });
                       }}
                       title="확인할 풀이 바로 보기"
-                      className="ml-2 rounded-full bg-salmon-soft px-2 py-0.5 text-xs font-semibold text-[#b5624f] hover:bg-salmon/40"
+                      className="ml-2 rounded-full bg-honey px-2 py-0.5 text-xs font-semibold text-ink hover:bg-honey-deep"
                     >
                       확인 {s.reviewCount}
                     </button>
@@ -587,7 +587,7 @@ function StudentTable({
                     {s.trend === "개선" ? (
                       <span className="font-semibold text-[#5d7a50]">↗ 개선</span>
                     ) : s.trend === "확인 필요" ? (
-                      <span className="font-semibold text-[#b5624f]">확인 필요</span>
+                      <span className="rounded-full bg-honey px-2 py-0.5 font-semibold text-ink">확인 필요</span>
                     ) : (
                       <span className="text-muted">{s.trend}</span>
                     )}

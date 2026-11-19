@@ -1,4 +1,5 @@
 "use client";
+import QuestionText from "@/components/QuestionText";
 
 import { useEffect, useState } from "react";
 import type { StudentSummary } from "@/lib/types";
@@ -103,7 +104,7 @@ export default function AiSummary({
                               {w.proofs.map((p) => (
                                 <li key={p.submissionId} className="rounded-lg bg-honey-soft/40 px-2.5 py-1.5 text-xs">
                                   <div className="text-muted">
-                                    {p.question}
+                                    <QuestionText text={p.question} />
                                     {p.teacherChecked && <span className="ml-1 text-olive">· 선생님 확인</span>}
                                   </div>
                                   {/* 학생이 실제로 쓴 풀이: 틀린 줄 주변만 잘라 빨간 테두리로 표시 (누르면 원본 전체) */}

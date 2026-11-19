@@ -66,7 +66,7 @@ export function falseNumberEquation(line: string) {
   return Math.abs(val(m[1]) - val(m[2])) > 1e-9;
 }
 export function handwritingIssue(
-  s: Pick<Submission, "ocrLines" | "ocrConfidence" | "analysis" | "question" | "status">,
+  s: Pick<Submission, "ocrLines" | "ocrConfidence" | "analysis" | "question" | "status" | "visionRead">,
 ): { lines: number[]; nothingRead: boolean } {
   const v = variableOf({ question: s.question ?? "", answer: "" });
   const norm = (l: string) => l.replace(/\s/g, "").replace(/[×✕χX]/g, "x");
@@ -75,6 +75,8 @@ export function handwritingIssue(
   const lines = s.ocrLines
     .map((raw, i) => {
       const fixed = s.analysis?.correctedLines?.[i] ?? raw;
+      // AI 가 다시 읽은 풀이: OCR 신뢰도·보정 차이는 보지 않고, AI 도 못 읽은 흔적(?, 이상한 글자)만 글씨체 문제로
+      if (s.visionRead) return fixed.includes("?") || raw.includes("?") || !ALLOWED.test(raw) || strayLetters(raw) ? i : -1;
       const odd =
         !ALLOWED.test(raw) ||
         strayLetters(raw) ||
@@ -144,6 +146,7 @@ export type Submission = {
   problemId: string;
   question?: string; // 제출 당시 문항 식 (과제가 바뀌어도 보이도록)
   concept?: string; // 문항의 관련 개념 (풀이 기록에서 무슨 항목인지 먼저 보여 준다)
+  problemAnswer?: string; // 문항에 선생님이 정한 정답 (교사 화면: 학생 답과 나란히)
   startedAt: number;
   submittedAt: number;
   strokes: Stroke[];
@@ -151,6 +154,7 @@ export type Submission = {
   ocrLines: string[];
   ocrConfidence?: number[]; // 줄별 OCR 신뢰도 (ocrLines 와 1:1)
   ocrRaw?: unknown;
+  visionRead?: boolean; // OCR 이 확신 없어 이미지 입력 AI(Gemini·Claude)가 다시 읽은 풀이 (ocr_raw.pulibomVision 이 있음)
   status: AnalysisStatus;
   statusMessage?: string;
   analysis?: Analysis;

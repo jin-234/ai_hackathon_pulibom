@@ -18,7 +18,16 @@ const MAX_SCALE = 2;
 const MAX_SIDE = 2400;
 const LINE_GAP = 1.1; // 다시 놓을 때 줄 사이 간격 (글자 높이 배수)
 
-export type OcrImage = { png: Buffer; width: number; height: number; bands: { top: number; bottom: number; fractions: number }[] };
+export type OcrImage = {
+  png: Buffer;
+  width: number;
+  height: number;
+  bands: { top: number; bottom: number; fractions: number }[];
+  marks: InkMark[]; // 줄(bands 번호)마다 찾은 빗금: 약분 표시·지운 흔적
+};
+export type InkMark = { line: number; kind: "cancel" | "strike" };
+// OCR 결과에 붙이는 빗금: line 은 돌려주는 줄 번호 (AI 가 줄 수를 바꿔 다시 읽었으면 null = 어느 줄인지 모름)
+export type LineMark = { line: number | null; kind: InkMark["kind"] };
 
 type Box = { s: Stroke; x0: number; x1: number; y0: number; y1: number; cx: number; cy: number };
 
@@ -213,13 +222,98 @@ function redrawTwoStrokeX(ink: Stroke[], gh: number): { ink: Stroke[]; xs: numbe
   return { ink: out, xs };
 }
 
-// 원본 캔버스 좌표로 본 줄 위치 (OCR 과 같은 방식으로 줄을 나눈다). 교사 화면에서 틀린 줄을 원본 이미지에 표시할 때 쓴다.
-export function lineBoxesOf(strokes: Stroke[], v = "x"): { x0: number; y0: number; x1: number; y1: number }[] {
+// ── 빗금 찾기 (약분 표시 · 줄을 그어 지운 흔적) ─────────────────────
+// 학생이 다 쓴 뒤에 돌아와 이미 쓴 글자 위에 그은 거의 곧은 획을 찾는다.
+//   - 곧음: 획 길이 / 양 끝 거리 ≤ 1.5
+//   - 나중에 그음: 가로지르는 획이 3획 이상 앞이거나 2초 이상 전에 쓴 것 ('+'·'4'·'x' 처럼 바로 이어 그은 획은 제외)
+//   - 글자를 꿰뚫음: 가로지르는 획이 글자 크기(글자 높이 2.2배 이하)이고, 빗금 양 끝이 그 글자 밖 (도형 선·'7' 의 사선 제외)
+//   - 짧고(글자 높이 2.5배 이하) 가로지르는 글자가 3개 이하 → 약분 표시(cancel): 빗금만 빼고 숫자는 남긴다
+//   - 길고 거의 가로이며 글자 2개 이상을 가로지름 → 지운 흔적(strike): 빗금과 그어진 글자를 모두 뺀다
+//   - 25° 이상 엇갈려 가로지를 때만 (나란히 겹친 선 제외), 한 풀이에 4개보다 많으면 도형으로 보고 무시
+type Pt = { x: number; y: number };
+function segCross(a: Pt, b: Pt, c: Pt, d: Pt) {
+  const o = (p: Pt, q: Pt, r: Pt) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  const d1 = o(c, d, a), d2 = o(c, d, b), d3 = o(a, b, c), d4 = o(a, b, d);
+  return d1 * d2 < 0 && d3 * d4 < 0;
+}
+function bbox(s: Stroke) {
+  const xs = s.points.map((p) => p.x), ys = s.points.map((p) => p.y);
+  return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+}
+const inside = (p: Pt, b: ReturnType<typeof bbox>) => p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1;
+function crossesStroke(mark: Stroke, other: Stroke) {
+  const a = mark.points[0], b = mark.points[mark.points.length - 1];
+  const pts = other.points;
+  for (let k = 1; k < pts.length; k++) {
+    const c = pts[k - 1], d = pts[k];
+    if (!segCross(a, b, c, d)) continue;
+    // 거의 나란히 겹친 선('=' 를 다시 그은 것 등)은 빼고, 25° 이상 엇갈려 가로지를 때만
+    const ux = b.x - a.x, uy = b.y - a.y, vx = d.x - c.x, vy = d.y - c.y;
+    const sin = Math.abs(ux * vy - uy * vx) / (Math.hypot(ux, uy) * Math.hypot(vx, vy) || 1);
+    if (sin > 0.42) return true;
+  }
+  return false;
+}
+export function detectInkMarks(drawn: Stroke[], gh: number): { remove: Set<string>; marks: { kind: InkMark["kind"]; cy: number }[] } {
+  const remove = new Set<string>();
+  const marks: { kind: InkMark["kind"]; cy: number }[] = [];
+  drawn.forEach((s, i) => {
+    const p = s.points;
+    if (p.length < 2 || remove.has(s.id)) return;
+    let len = 0;
+    for (let k = 1; k < p.length; k++) len += Math.hypot(p[k].x - p[k - 1].x, p[k].y - p[k - 1].y);
+    const chord = Math.hypot(p[p.length - 1].x - p[0].x, p[p.length - 1].y - p[0].y);
+    if (chord < 0.6 * gh || len / chord > 1.5) return;
+    const start = p[0].t;
+    const a = p[0], z = p[p.length - 1];
+    const crossed = drawn.slice(0, i).filter((e, j) => {
+      if (remove.has(e.id) || !(i - j >= 3 || start - e.points[e.points.length - 1].t > 2000)) return false;
+      const b = bbox(e);
+      if (Math.max(b.x1 - b.x0, b.y1 - b.y0) > 2.2 * gh) return false; // 도형 선 같은 큰 획
+      if (inside(a, b) || inside(z, b)) return false; // 글자를 꿰뚫지 않고 붙어 있음 ('7' 의 사선 등)
+      return crossesStroke(s, e);
+    });
+    if (!crossed.length) return;
+    const flat = Math.abs(z.y - a.y) < 0.6 * Math.abs(z.x - a.x);
+    const kind = chord <= 2.5 * gh && crossed.length <= 3 ? "cancel" : flat && crossed.length >= 2 ? "strike" : null;
+    if (!kind) return;
+    remove.add(s.id);
+    if (kind === "strike") for (const e of crossed) remove.add(e.id);
+    marks.push({ kind, cy: (p[0].y + p[p.length - 1].y) / 2 });
+  });
+  // 한 풀이에 빗금이 4개보다 많으면 도형(다각형의 대각선 등)으로 보고 빗금으로 치지 않는다
+  if (marks.length > 4) return { remove: new Set(), marks: [] };
+  return { remove, marks };
+}
+
+// 빗금을 뺀 획 + 찾은 빗금 (글자 높이는 원래 획으로 잰다: 다시 그린 X 로 재면 줄 나누기가 달라진다)
+function withoutMarks(strokes: Stroke[]) {
   const drawn = strokes
     .filter((s) => s.tool !== "highlighter" && s.points.length > 0)
     .sort((a, b) => a.points[0].t - b.points[0].t);
-  if (drawn.length === 0) return [];
+  if (!drawn.length) return { drawn, gh: 10, found: [] as { kind: InkMark["kind"]; cy: number }[] };
   const gh = glyphHeight(drawn.map(box));
+  const { remove, marks } = detectInkMarks(drawn, gh);
+  return { drawn: drawn.filter((s) => !remove.has(s.id)), gh, found: marks };
+}
+// 빗금을 가장 가까운 줄에 붙인다 (줄 번호는 splitLines 순서 = bands 순서)
+function marksToLines(found: { kind: InkMark["kind"]; cy: number }[], lines: Box[][]): InkMark[] {
+  const ranges = lines.map((l) => ({ y0: Math.min(...l.map((b) => b.y0)), y1: Math.max(...l.map((b) => b.y1)) }));
+  if (!ranges.length) return [];
+  return found.map((m) => {
+    const dist = (r: { y0: number; y1: number }) => (m.cy < r.y0 ? r.y0 - m.cy : m.cy > r.y1 ? m.cy - r.y1 : 0);
+    let best = 0;
+    ranges.forEach((r, i) => {
+      if (dist(r) < dist(ranges[best])) best = i;
+    });
+    return { line: best, kind: m.kind };
+  });
+}
+
+// 원본 캔버스 좌표로 본 줄 위치 (OCR 과 같은 방식으로 줄을 나눈다). 교사 화면에서 틀린 줄을 원본 이미지에 표시할 때 쓴다.
+export function lineBoxesOf(strokes: Stroke[], v = "x"): { x0: number; y0: number; x1: number; y1: number }[] {
+  const { drawn, gh } = withoutMarks(strokes); // OCR 과 같게 빗금은 빼고 줄을 나눈다
+  if (drawn.length === 0) return [];
   const ink = v === "x" ? redrawTwoStrokeX(drawn, gh).ink : drawn;
   return splitLines(ink.map(box), gh).map((l) => ({
     x0: Math.min(...l.map((b) => b.x0)),
@@ -230,12 +324,9 @@ export function lineBoxesOf(strokes: Stroke[], v = "x"): { x0: number; y0: numbe
 }
 
 export async function strokesToOcrImage(strokes: Stroke[], v = "x"): Promise<OcrImage | null> {
-  const drawn = strokes
-    .filter((s) => s.tool !== "highlighter" && s.points.length > 0)
-    .sort((a, b) => a.points[0].t - b.points[0].t);
+  // 약분 빗금·지운 흔적은 OCR 이미지에서 뺀다 (줄마다 무엇이 있었는지는 marks 로 넘김)
+  const { drawn, gh, found } = withoutMarks(strokes);
   if (drawn.length === 0) return null;
-  // 글자 높이는 원래 획으로 잰다 (다시 그린 X 로 재면 줄 나누기가 달라진다)
-  const gh = glyphHeight(drawn.map(box));
   // 두 획 x 다시 그리기는 x 문항만 (y·a·b 등을 X 로 바꾸면 안 된다)
   const ink = v === "x" ? redrawTwoStrokeX(drawn, gh).ink : drawn;
   const boxes = ink.map(box);
@@ -244,7 +335,9 @@ export async function strokesToOcrImage(strokes: Stroke[], v = "x"): Promise<Ocr
   const placed: Ink[] = [];
   const lineSpans: { top: number; bottom: number; fractions: number }[] = [];
   let cursor = 0;
-  for (const line of splitLines(boxes, gh)) {
+  const split = splitLines(boxes, gh);
+  const marks = marksToLines(found, split);
+  for (const line of split) {
     const k = slopeOf(line);
     const x0 = Math.min(...line.map((b) => b.x0));
     const straight = line.map((b) => ({ width: b.s.width, pts: b.s.points.map((p) => ({ x: p.x, y: p.y - k * (p.x - x0) })) }));
@@ -286,7 +379,7 @@ export async function strokesToOcrImage(strokes: Stroke[], v = "x"): Promise<Ocr
   // 줄 경계는 줄 사이 간격의 가운데
   const half = (LINE_GAP * gh) / 2;
   const bands = lineSpans.map((l) => ({ top: (l.top - half - minY) * scale, bottom: (l.bottom + half - minY) * scale, fractions: l.fractions }));
-  return { png: await sharp(Buffer.from(svg)).png().toBuffer(), width: w, height: h, bands };
+  return { png: await sharp(Buffer.from(svg)).png().toBuffer(), width: w, height: h, bands, marks };
 }
 
 // 줄 하나만 잘라낸 이미지 (위아래로 흰 여백을 붙여 너무 납작하지 않게)
@@ -309,7 +402,7 @@ const MAX_RETRY = 4;
 // (돌려주는 신뢰도는 OCR 값 그대로. '/' 부족은 fractions 로 넘겨 보정 단계에서 되살리고 판단한다)
 const SUSPECT = 0.5;
 
-// opts.vision: OCR 이 확신 없는 줄을 Mathpix → Claude 로 다시 읽기 (기본 켬)
+// opts.vision: OCR 이 확신 없는 줄을 이미지 입력 LLM 으로 다시 읽기 (기본 켬, 키가 없으면 건너뜀)
 export async function ocrFromStrokes(strokes: Stroke[], v = "x", opts: { vision?: boolean; visionMode?: VisionMode } = {}) {
   const img = await strokesToOcrImage(strokes, v);
   if (!img) return null;
@@ -340,7 +433,7 @@ export async function ocrFromStrokes(strokes: Stroke[], v = "x", opts: { vision?
       // 다시 읽기 실패(요청 한도 등)는 첫 결과를 그대로 쓴다
     }
   }
-  // OCR 이 끝내 확신하지 못한 줄이 있으면 Mathpix → Claude 로 다시 읽는다 (빈 줄도 채울 수 있다)
+  // OCR 이 끝내 확신하지 못한 줄만 이미지 입력 LLM 으로 다시 읽는다 (빈 줄도 채울 수 있다)
   let vision: { model: string; mode: VisionMode; ocr: string[]; lines: { line: number; ocr: string; vision: string }[] } | undefined;
   if (opts.vision !== false && hasVision()) {
     const suspects = suspectLines(lines, confidences, fractions, v);
@@ -354,7 +447,12 @@ export async function ocrFromStrokes(strokes: Stroke[], v = "x", opts: { vision?
           lines: whole.lines,
           confidences: whole.lines.map(() => VISION_CONFIDENCE),
           fractions: sameCount ? fractions : whole.lines.map(() => 0),
-          raw: { ...(first.raw as object), pulibomVision: { model: whole.model ?? "", mode, ocr: lines, lines: [], attempts: whole.attempts } },
+          marks: img.marks.map((m): LineMark => ({ line: sameCount ? m.line : null, kind: m.kind })),
+          raw: {
+            ...(first.raw as object),
+            pulibomVision: { model: whole.model ?? "", mode, ocr: lines, lines: [] },
+            ...(img.marks.length ? { pulibomMarks: img.marks } : {}),
+          },
         };
       }
     } else if (suspects.length) {
@@ -373,11 +471,18 @@ export async function ocrFromStrokes(strokes: Stroke[], v = "x", opts: { vision?
   }
   // 끝내 아무것도 못 읽은 줄은 뺀다
   const keep = lines.map((l, i) => i).filter((i) => lines[i]);
+  // 빗금이 붙은 줄이 빠졌으면 어느 줄인지 모름(null)
+  const marks = img.marks.map((m): LineMark => ({ line: keep.includes(m.line) ? keep.indexOf(m.line) : null, kind: m.kind }));
   return {
     lines: keep.map((i) => lines[i]),
     confidences: keep.map((i) => confidences[i]),
     fractions: keep.map((i) => fractions[i]),
-    // 원래 OCR 결과 + LLM 이 다시 읽은 줄 기록 (submissions.ocr_raw)
-    raw: vision ? { ...(first.raw as object), pulibomVision: vision } : first.raw,
+    marks,
+    // 원래 OCR 결과 + LLM 이 다시 읽은 줄 + 찾은 빗금 기록 (submissions.ocr_raw)
+    raw: {
+      ...(first.raw as object),
+      ...(vision ? { pulibomVision: vision } : {}),
+      ...(img.marks.length ? { pulibomMarks: img.marks } : {}),
+    },
   };
 }
