@@ -363,14 +363,14 @@ function SubmissionList({
                                   <span className="rounded-full bg-honey px-2 py-0.5 text-xs text-ink">확인 필요</span>
                                 ) : null}
                                 <span className="text-xs text-muted">
-                                  {new Date(x.submittedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                  {new Date(x.submittedAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                                 </span>
                                 <button onClick={() => setOpen(null)} aria-label="닫기" className="text-xs text-muted hover:text-ink">
                                   ✕
                                 </button>
                               </div>
                               <div className="p-3">
-                                <SubmissionCard s={x} onUpdate={onUpdate} />
+                                <SubmissionCard key={x.id} s={x} onUpdate={onUpdate} />
                               </div>
                             </div>
                           );
@@ -446,6 +446,9 @@ function studentAnswerOf(s: Submission) {
   return { text: fromLines, correct: s.analysis?.correct ?? null, note: fromLines ? "답안 칸이 비어 풀이 끝에서 읽었어요" : null };
 }
 
+// 제출하고 5분이 지났는데 아직 '분석 중': 멈춘 것으로 보고 '↻ 다시' 를 보여 준다 (보통 10~20초면 끝남)
+const stalePending = (s: Submission) => s.status === "pending" && Date.now() - s.submittedAt > 5 * 60 * 1000;
+
 const STATUS: Record<Submission["status"], { label: string; cls: string }> = {
   pending: { label: "분석 중", cls: "bg-honey-soft text-olive" },
   done: { label: "분석 완료", cls: "bg-sage-soft text-[#5d7a50]" },
@@ -470,10 +473,16 @@ export function SubmissionCard({
   const a = s.analysis;
   const ans = studentAnswerOf(s);
   const [memo, setMemo] = useState(s.teacher?.memo ?? "");
-  const [errorType, setErrorType] = useState<ErrorType>(s.teacher?.errorType ?? a?.errorType ?? "NONE");
+  // 오류 유형: 선생님이 정한 것 → AI 판정. 둘 다 없으면 (분석 중·분석 실패) 비워 둔다 ("오류 없음"으로 정해 두면 그대로 저장했을 때 오답이 정답으로 바뀜)
+  const savedErrorType: ErrorType | "" = s.teacher?.errorType ?? a?.errorType ?? "";
+  const [errorType, setErrorType] = useState<ErrorType | "">(savedErrorType);
+  const [touched, setTouched] = useState(false);
+  // 카드를 연 뒤에 분석이 끝나면, 선생님이 아직 고르지 않았으면 AI 유형으로 맞춘다
+  useEffect(() => {
+    if (!touched) setErrorType(savedErrorType);
+  }, [savedErrorType, touched]);
 
   const [saving, setSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const savedErrorType = s.teacher?.errorType ?? a?.errorType ?? "NONE";
   const dirty = memo !== (s.teacher?.memo ?? "") || errorType !== savedErrorType;
   const confirmed = Boolean(s.teacher?.confirmedAt);
   const [imageMissing, setImageMissing] = useState(false);
@@ -484,10 +493,12 @@ export function SubmissionCard({
       const res = await fetch(`/api/submissions/${s.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ memo, errorType }),
+        // 유형을 고르지 않았으면 메모만 (유형은 AI 판정 그대로)
+        body: JSON.stringify({ memo, ...(errorType ? { errorType } : {}) }),
       });
       if (!res.ok) throw new Error();
       onUpdate(await res.json());
+      setTouched(false);
       setSaving("saved");
       onSaved?.();
       setTimeout(() => setSaving("idle"), 2500);
@@ -508,7 +519,7 @@ export function SubmissionCard({
           ) : (
             <span className={`mt-0.5 shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs ${STATUS[s.status].cls}`}>{STATUS[s.status].label}</span>
           )}
-          {s.status !== "pending" && !s.readOnly && (
+          {(s.status !== "pending" || stalePending(s)) && !s.readOnly && (
             <button
               onClick={async () => {
                 await fetch(`/api/submissions/${s.id}/reanalyze`, { method: "POST" });
@@ -632,9 +643,13 @@ export function SubmissionCard({
             <div className="text-xs font-semibold text-muted">선생님 확인</div>
             <select
               value={errorType}
-              onChange={(e) => setErrorType(e.target.value as ErrorType)}
+              onChange={(e) => {
+                setErrorType(e.target.value as ErrorType | "");
+                setTouched(true);
+              }}
               className="rounded-full border border-line bg-paper px-3 py-1.5"
             >
+              {!savedErrorType && <option value="">{s.status === "pending" ? "분석 중이에요 · 오류 유형 고르기" : "오류 유형 고르기"}</option>}
               {(Object.keys(ERROR_LABEL) as ErrorType[]).map((k) => (
                 <option key={k} value={k}>{ERROR_LABEL[k]}</option>
               ))}
@@ -653,7 +668,7 @@ export function SubmissionCard({
                   : dirty
                     ? "저장 안 됨"
                     : confirmed
-                      ? `✓ ${new Date(s.teacher!.confirmedAt!).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 확인함`
+                      ? `✓ ${new Date(s.teacher!.confirmedAt!).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 확인함`
                       : ""}
               </span>
               <button

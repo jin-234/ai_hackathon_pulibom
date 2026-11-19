@@ -76,6 +76,12 @@ export default function StudentApp({
   const [idx, setIdx] = useState(() => (results ? 0 : Math.max(0, PROBLEMS.findIndex((p) => !initialDone[p.id]))));
   const [sending, setSending] = useState(false);
   const [celebrate, setCelebrate] = useState(false);
+  // 제출 중: 두 번 눌러도 한 번만, 그동안 문항 이동은 막는다 (state 는 다음 그리기까지 늦어서 ref 로)
+  const sendingRef = useRef(false);
+  // 답안 칸에 아직 글자로 안 바꾼 필기를 제출 전에 읽는다 (AnswerField)
+  const answerFlush = useRef<(() => Promise<string>) | null>(null);
+  // 제출을 기다리는 동안 더 쓴 문항 (제출은 됐고, 더 쓴 내용은 남겨 둠 → 다시 제출 안내)
+  const [keptAfterSend, setKeptAfterSend] = useState<Record<string, boolean>>({});
   const [startedAt, setStartedAt] = useState(() => Date.now()); // 지금 문항을 이번에 펼친 시각
   const [elapsed, setElapsed] = useState(0);
   const canvas = useRef<InkCanvasHandle>(null); // 정리 풀이 (AI 가 읽는 칸)
@@ -210,6 +216,8 @@ export default function StudentApp({
 
   // submitted: 방금 낸 문항을 떠남 → 그 문항의 기록은 비운다 (다시 풀면 새로 잰다)
   const goto = (i: number, opts: { submitted?: boolean } = {}) => {
+    // 제출 응답을 기다리는 동안은 옮기지 않는다 (응답이 오면 그 문항 기준으로 정리하므로)
+    if (sendingRef.current && !opts.submitted) return;
     const now = Date.now();
     const pid = problem.id;
     if (opts.submitted) {
@@ -245,17 +253,30 @@ export default function StudentApp({
   };
 
   const submit = async () => {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
+    try {
+      await send();
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  };
+
+  const send = async () => {
+    // 답안 칸에 펜으로 쓰고 바로 제출해도 마지막 글자가 빠지지 않게, 남은 필기를 먼저 읽는다
+    const answerNow = choices ? answer : ((await answerFlush.current?.().catch(() => answer)) ?? answer);
     const data = canvas.current?.getData();
     if (!data) return;
     if (data.strokes.length === 0 && !confirm("정리 풀이 칸이 비어 있어요. 그래도 제출할까요?")) return;
     const sc = pad.current?.getData();
     const scratch = sc?.strokes.length ? { strokes: sc.strokes, imageDataUrl: sc.imageDataUrl } : undefined;
-    const answerText = answer.trim();
+    const answerText = answerNow.trim();
     if (!answerText && !confirm("답안 칸이 비어 있어요. 그래도 제출할까요?")) return;
     // 이 문항의 자동 저장은 보내지 않는다 (제출 뒤에 도착하면 지운 기록이 되살아난다). 다른 문항 것은 지금 보낸다
     delete pendingRef.current[problem.id];
     flushDrafts();
-    setSending(true);
     try {
       const res = await fetch("/api/submissions", {
         method: "POST",
@@ -264,6 +285,20 @@ export default function StudentApp({
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "제출하지 못했어요.");
       setDone((d) => ({ ...d, [problem.id]: true }));
+      // 응답을 기다리는 동안 더 썼으면 (정리 풀이·연습장·답안 칸): 넘어가지 않고 더 쓴 내용을 남겨 둔다 (자동 저장도 다시)
+      const nowStrokes = canvas.current?.getStrokes();
+      const nowScratch = pad.current?.getStrokes();
+      const nowAnswer = (ansRef.current[problem.id] ?? "").trim();
+      const strokesMoved = !!nowStrokes && nowStrokes !== data.strokes;
+      const scratchMoved = !!nowScratch && nowScratch !== (sc?.strokes ?? nowScratch);
+      if (strokesMoved || scratchMoved || nowAnswer !== answerText) {
+        if (strokesMoved) saveDraft(nowStrokes);
+        if (scratchMoved) saveScratch(nowScratch);
+        if (nowAnswer !== answerText) saveAnswer(ansRef.current[problem.id] ?? "");
+        setKeptAfterSend((k) => ({ ...k, [problem.id]: true }));
+        return;
+      }
+      setKeptAfterSend((k) => ({ ...k, [problem.id]: false }));
       inkRef.current[problem.id] = data.strokes;
       ansRef.current[problem.id] = answerText;
       scratchRef.current[problem.id] = sc?.strokes ?? [];
@@ -288,8 +323,6 @@ export default function StudentApp({
       }
     } catch (e) {
       alert((e as Error).message);
-    } finally {
-      setSending(false);
     }
   };
 
@@ -531,7 +564,12 @@ export default function StudentApp({
             <span>
               ✍️ 그림이나 계산은 <b className="text-ink">연습장</b>에 마음껏, 채점받을 풀이는 <b className="text-ink">정리 칸</b>에 한 줄씩 써 주세요.
             </span>
-            {done[problem.id] && <span className="text-[#5d7a50]">✓ 제출한 풀이예요. 고쳐서 다시 제출할 수 있어요.</span>}
+            {done[problem.id] &&
+              (keptAfterSend[problem.id] ? (
+                <span className="text-olive">✓ 제출했어요. 제출하는 동안 더 쓴 내용은 남겨 뒀으니, 다 고쳤으면 다시 제출해 주세요.</span>
+              ) : (
+                <span className="text-[#5d7a50]">✓ 제출한 풀이예요. 고쳐서 다시 제출할 수 있어요.</span>
+              ))}
             <span className="ml-auto flex items-center gap-3">
               <button
                 onClick={() => {
@@ -630,7 +668,7 @@ export default function StudentApp({
                 {choices.length ? (
                   <ChoiceField choices={choices} value={answer} onChange={saveAnswer} disabled={sending || closed} />
                 ) : (
-                  <AnswerField problemId={problem.id} value={answer} onChange={saveAnswer} onSubmit={() => !sending && submit()} disabled={sending || closed} />
+                  <AnswerField problemId={problem.id} value={answer} onChange={saveAnswer} onSubmit={() => void submit()} disabled={closed} flushRef={answerFlush} />
                 )}
                 <button
                   onClick={submit}
@@ -769,7 +807,7 @@ function ResultCard({ r }: { r: MyResult | undefined }) {
           <>
             <b>{teacherLabel}</b>
             <span className="ml-1.5 text-xs text-muted">
-              {new Date(t.confirmedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+              {new Date(t.confirmedAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
             </span>
             {teacherDiffers && <p className="mt-1 text-xs text-muted">선생님이 AI 채점을 고쳤어요. 선생님 결과를 따라요.</p>}
             {t.memo && <p className="mt-2 whitespace-pre-wrap rounded-xl bg-honey-soft/60 px-3 py-2 leading-relaxed">💬 {t.memo}</p>}
@@ -837,7 +875,7 @@ function MySolution({ r }: { r: MyResult | undefined }) {
           </div>
         )}
         <span className="ml-auto text-xs text-muted">
-          {new Date(r.submittedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 제출
+          {new Date(r.submittedAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 제출
         </span>
       </div>
       {missing ? (

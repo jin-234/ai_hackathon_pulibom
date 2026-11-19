@@ -1,6 +1,7 @@
 import { runClaude } from "./claudeCli";
+import { parseAiJson } from "./aiJson";
 import { env } from "./env";
-import { LOW_OCR_CONFIDENCE, OCR_ALLOWED, falseNumberEquation } from "./types";
+import { LOW_OCR_CONFIDENCE, OCR_ALLOWED, falseNumberEquation, strayLetters } from "./types";
 
 // OCR 이 제대로 못 읽은 풀이를 Claude(Claude Code 헤드리스, claude -p)가 이미지를 보고 다시 읽는다.
 //   흐름: 업스테이지 OCR → 확신 없는 줄 고르기(suspectLines) → Claude 가 이미지를 보고 다시 읽기 → 채점(Claude)
@@ -27,8 +28,11 @@ export function hasVision() {
 
 // 확신 없는 줄 번호: 비었거나, 신뢰도가 낮거나, 수식에 없는 글자(つし·次 등)나 미지수가 아닌 영문자가 섞였거나,
 // 획에서 찾은 분수보다 '/' 가 적거나, 미지수 문항인데 '2=4' 처럼 성립하지 않는 숫자 등식인 줄 (x 를 숫자로 읽음)
-export function suspectLines(lines: string[], confidences: number[], fractions: number[], v = "x"): number[] {
+//  question: 문제 글 (문제에 나온 글자 a_n·k·f 등은 이상한 글자로 보지 않는다. 글씨체 판정과 같은 기준)
+export function suspectLines(lines: string[], confidences: number[], fractions: number[], v = "x", question = ""): number[] {
   const anyEquals = lines.some((l) => l.includes("="));
+  // 계산 이어 쓰기: 첫 줄은 식, 다음 줄부터 '=…' (log₂12 - log₂3 → =log₂4 → =2). 이때 '=' 로 시작하는 줄·'=' 없는 첫 줄은 정상
+  const chain = !!lines[0]?.trim() && !lines[0].includes("=") && lines.slice(1).some((l) => l.trim().startsWith("="));
   return lines
     .map((line, i) => ({ line, i }))
     .filter(({ line, i }) => {
@@ -36,13 +40,13 @@ export function suspectLines(lines: string[], confidences: number[], fractions: 
       if (!t) return true;
       if ((confidences[i] ?? 1) < LOW_OCR_CONFIDENCE) return true;
       if (!OCR_ALLOWED.test(t)) return true;
-      if ((t.match(/[a-zA-Z]+/g) ?? []).some((w) => w.toLowerCase() !== v.toLowerCase())) return true;
+      if (strayLetters(t, v, question)) return true;
       if ((t.match(/\//g)?.length ?? 0) < (fractions[i] ?? 0)) return true;
       if (v && falseNumberEquation(t)) return true;
       // 모양이 이상한 식: '==', '=' 로 시작·끝, 연산자로 끝남
-      if (/==|^=|=$|[+\-*/=]$/.test(t)) return true;
+      if (/==|=$|[+\-*/=]$/.test(t) || (t.startsWith("=") && !(chain && i > 0))) return true;
       // 다른 줄은 등식인데 이 줄만 '=' 가 없음 (예: '32-9', '55' → '3x=9', '5x=5')
-      if (anyEquals && !t.includes("=")) return true;
+      if (anyEquals && !t.includes("=") && !(chain && i === 0)) return true;
       return false;
     })
     .map(({ i }) => i);
@@ -116,7 +120,7 @@ const VISION_SYSTEM = "너는 손글씨 수학 풀이 이미지를 글자로 옮
 async function callClaudeCli(model: string, prompt: string, images: Buffer[]): Promise<unknown[] | null> {
   try {
     const text = await runClaude(`${prompt}\n다른 말 없이 JSON만 출력한다.`, { model, images, system: VISION_SYSTEM });
-    const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}") as { lines?: unknown };
+    const parsed = (parseAiJson(text) ?? {}) as { lines?: unknown };
     return Array.isArray(parsed.lines) ? parsed.lines : [];
   } catch {
     return null;
