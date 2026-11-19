@@ -51,7 +51,7 @@ export function suspectLines(lines: string[], confidences: number[], fractions: 
 // 이미지 전체를 처음부터 다시 읽기 (OCR 글자는 주지 않음). 돌려주는 값: 줄들, 쓴 모델 (실패하면 빈 배열)
 export async function readWhole(png: Buffer, v = "x"): Promise<{ lines: string[]; model?: string }> {
   if (!hasVision()) return { lines: [] };
-  const prompt = `중학생이 손으로 쓴 수학 풀이 이미지다. 위에서부터 줄마다 쓰인 식을 학생이 쓴 그대로 옮겨 적는다.
+  const prompt = `학생이 손으로 쓴 수학 풀이 이미지다. 위에서부터 줄마다 쓰인 식을 학생이 쓴 그대로 옮겨 적는다.
 - 학생이 틀리게 썼어도 절대 고치지 않는다 (채점은 다음 단계에서 한다). 계산이 틀렸으면 틀린 그대로 쓴다.
 - ${variableHint(v)}
 - 한 줄에 식 하나. 학생이 쓴 줄 수 그대로 (줄을 합치거나 나누지 않는다). 낙서·점·지운 흔적은 뺀다.
@@ -84,7 +84,7 @@ export async function rereadLines(crops: Map<number, Buffer>, lines: string[], v
   if (!hasVision() || !crops.size) return { lines: new Map() };
   const order = [...crops.keys()];
   const variable = variableHint(v);
-  const prompt = `중학생이 손으로 쓴 수학 풀이에서 한 줄씩 잘라낸 이미지 ${order.length}장이다. 이미지마다 쓰인 식을 학생이 쓴 그대로 옮겨 적는다.
+  const prompt = `학생이 손으로 쓴 수학 풀이에서 한 줄씩 잘라낸 이미지 ${order.length}장이다. 이미지마다 쓰인 식을 학생이 쓴 그대로 옮겨 적는다.
 - 학생이 틀리게 썼어도 절대 고치지 않는다 (채점은 다음 단계에서 한다). 계산이 틀렸으면 틀린 그대로 쓴다.
 - ${variable}
 - 분수는 a/b, 거듭제곱은 ^. 공백 없이.

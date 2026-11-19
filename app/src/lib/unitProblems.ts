@@ -1,5 +1,6 @@
 import { chat } from "./ai";
 import { findLesson, gradeName } from "./curriculum";
+import { compileExpr, describeFigure, FIGURE_PROMPT, sanitizeFigure, type Figure } from "./figure";
 import { solveLinear } from "./equation";
 import { generateFromTemplate, listTemplates } from "./problemBank";
 
@@ -18,6 +19,7 @@ export type UnitItem = {
   source: "bank" | "ai";
   doubt?: string; // AI 검산이 어긋남 (검산 답·이유). 교사가 꼭 확인
   reject?: string; // 버릴 문항: 조건 모순·학년 범위 밖 (교사에게 보내지 않음)
+  figure?: Figure; // 문항 그림 (좌표·치수가 검사를 통과한 것만)
 };
 
 // 학년별로 아직 배우지 않은 내용 (2022 개정). AI 가 자주 넘어가는 것만 적는다
@@ -124,12 +126,13 @@ async function aiRound(grade: number, unitName: string, lessonName: string, desc
 - 복소수·행렬·집합처럼 숫자 하나로 계산할 수 없는 검산은 checks 에 넣지 않는다 (빈 배열이면 다음 단계에서 다시 풀어 검산한다).`
       : ""
   }
-- JSON만 출력: {"items": [{"question": "...", "answer": "...", "solution": ["...", "..."], "checks": ["..."]}]}`;
+${FIGURE_PROMPT}
+- JSON만 출력: {"items": [{"question": "...", "answer": "...", "solution": ["...", "..."], "checks": ["..."], "figure": {…} 또는 생략}]}`;
   const user = `[학년] ${gradeName(grade)}
 [단원] ${unitName} > ${lessonName}
 [학습 내용] ${desc}${focus ? `\n${focus}` : ""}
 문항 ${count + 2}개를 만들어라.${retry ? "\n앞에서 만든 문항과 겹치지 않게, 조건이 모순되지 않고 학년 범위 안인 문항만." : ""}`;
-  let parsed: { items?: { question?: unknown; answer?: unknown; solution?: unknown; checks?: unknown }[] };
+  let parsed: { items?: { question?: unknown; answer?: unknown; solution?: unknown; checks?: unknown; figure?: unknown }[] };
   try {
     parsed = JSON.parse((await chat(system, user, 0.7)).match(/\{[\s\S]*\}/)?.[0] ?? "{}");
   } catch (e) {
@@ -156,6 +159,20 @@ async function aiRound(grade: number, unitName: string, lessonName: string, desc
     }
     if (!answer) continue;
     const item: UnitItem = { question, answer, solution, concept: lessonName, source: "ai" };
+    // 그림: 좌표·표시가 맞는 것만. 문제가 그림을 가리키는데 그림이 틀렸으면 문항을 버린다
+    if (it.figure) {
+      const fig = sanitizeFigure(it.figure);
+      if (fig.figure) item.figure = fig.figure;
+      else if (/그림|그래프와\s*같이|아래/.test(question)) {
+        item.reject = `그림이 맞지 않음: ${fig.problem}`;
+        items.push(item);
+        continue;
+      }
+    } else if (/그림과\s*같이|그림에서|아래\s*그림/.test(question)) {
+      item.reject = "그림을 가리키는데 그림이 없음";
+      items.push(item);
+      continue;
+    }
     const scope = outOfScope(grade, item);
     if (scope) {
       item.reject = scope;
@@ -183,9 +200,11 @@ async function crossCheck(grade: number, items: UnitItem[]) {
 규칙:
 - 각 문제를 처음부터 식을 세워 직접 계산한다. 계산 과정을 work 에 짧게 쓰고, 마지막에 구한 답을 answer 에 쓴다.
 - 구한 답을 문제의 모든 조건에 다시 대입해 확인한다. 조건이 서로 맞지 않거나 답이 없거나 여러 개면 problem 에 이유를 쓴다 (문제없으면 빈 문자열).
+- 도형·입체도형은 주어진 길이끼리 맞는지도 본다 (예: 높이 8 cm 인 사각뿔의 옆면의 높이가 5 cm 이면 모순: 옆면의 높이는 높이보다 길어야 한다. 원뿔은 모선² = 높이² + 반지름²).
 - ${gradeName(grade)}이 아직 배우지 않은 내용${NOT_YET[grade] ? ` (${NOT_YET[grade]})` : ""}이 있어야 풀리면 problem 에 "학년 범위 밖: 이유"를 쓴다.
 - JSON만 출력: {"results": [{"no": 1, "work": "...", "answer": "...", "problem": ""}]}`;
-  const user = items.map((it, i) => `${i + 1}. ${it.question}`).join("\n");
+  // 그림은 글로 바꿔 함께 준다 (좌표·길이를 보고 풀 수 있게)
+  const user = items.map((it, i) => `${i + 1}. ${it.question}${it.figure ? `\n   [그림] ${describeFigure(it.figure)}` : ""}`).join("\n");
   try {
     const parsed = JSON.parse((await chat(system, user, 0)).match(/\{[\s\S]*\}/)?.[0] ?? "{}") as {
       results?: { no?: unknown; answer?: unknown; problem?: unknown }[];
@@ -204,10 +223,21 @@ async function crossCheck(grade: number, items: UnitItem[]) {
 }
 
 // 두 답에 나온 숫자가 같은지 ("어른 8000원, 학생 4000원" vs "8000, 4000" → 같음). 한쪽이라도 숫자가 없으면 null
+// 단위·'x =' 를 떼고 π·√·곱셈 생략까지 계산 ("π cm" → π, "2π cm" → 2π, "3√5" → 3√5). 문자식(x 가 남는 답)은 null
+function loose(t: string): number | null {
+  const c = t
+    .replace(/^\s*[a-zA-Z]\s*=\s*/, "")
+    .replace(/\s*(cm²|cm³|cm\^?2|cm\^?3|cm|mm|m²|km|m|°|도|개|원|명|살|권|자루|mL|L)\s*$/, "")
+    .trim();
+  if (!c || /[a-oq-zA-Z]/.test(c.replace(/pi|sqrt|abs/g, ""))) return null;
+  const v = compileExpr(c)?.(0);
+  return v !== undefined && Number.isFinite(v) ? v : null;
+}
+
 export function sameNumbers(a: string, b: string): boolean | null {
   // 둘 다 계산되는 식이면 값으로 ("2² × 3²" vs "36")
   const value = (t: string) => evalArith(t.replace(/²/g, "^2").replace(/³/g, "^3").replace(/^\s*[a-zA-Z]\s*=\s*/, ""));
-  const va = value(a), vb = value(b);
+  const va = value(a) ?? loose(a), vb = value(b) ?? loose(b);
   if (va !== null && vb !== null) return Math.abs(va - vb) < 1e-6 * Math.max(1, Math.abs(va));
   const nums = (t: string) =>
     (t.replace(/,(?=\d{3})/g, "").replace(/[²³]/g, "").match(/-?\d+(\.\d+)?/g) ?? []).map(Number).sort((x, y) => x - y);
