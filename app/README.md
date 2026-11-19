@@ -146,7 +146,10 @@ OCR 전용 이미지  두 획으로 쓴 x(ɔc·ㄱL)를 반듯한 X 로 다시 �
 | `src/lib/signup.ts` | 반 코드로 학생 회원가입, 반 코드 조회·새로 만들기 |
 | `src/lib/store.ts` | 풀이 저장 (DB, 이미지 포함), 풀이마다 어느 학년도·반 기록인지 같이 조회 |
 | `src/components/GroupSupplement.tsx` | 대시보드 소그룹 묶기 + 그룹 보충 패널 |
-| `src/lib/curriculum.ts`, `src/lib/unitProblems.ts` | 학년별 교육과정 단원 목록(2022 개정, 초안) / 소단원 문항 만들기: 문제은행 틀 또는 AI + 검산(풀이기 · 대입 검산식 계산 · 정답 안 보여 주고 다시 풀기) |
+| `src/lib/curriculum.ts`, `src/lib/unitProblems.ts` | 학년별 교육과정 단원 목록(2022 개정 중1~중3 + 고1 공통수학, 초안. 학년 4 = 고1) / 소단원 문항 만들기: 문제은행 틀 또는 AI + 검산(풀이기 · 대입 검산식 계산 · 정답 안 보여 주고 다시 풀기) |
+| `src/lib/figure.ts`, `src/components/FigureView.tsx` | 문항 그림: AI 가 좌표·치수만 주면(평면도형·부채꼴·좌표평면·함수 그래프·입체도형) 앱이 SVG 로 그림. `sanitizeFigure` 가 길이·각·피타고라스 관계를 검사해 안 맞는 그림은 버림. `describeFigure` 로 채점·검산 AI 에게 그림을 글로 넘김 |
+| `src/lib/problemImages.ts`, `src/components/FigureEditor.tsx` | 선생님이 올린 문제 그림 (`problem_images` 테이블, `/api/problem-images`). 1600px 이하로 줄이고 EXIF 를 지워 저장 |
+| `src/lib/foundations.ts` | 고등학생 요약용 '다시 볼 중학 기초' 10테마 (EBS 50일 수학 목차): 틀린 풀이 → 테마 |
 | `src/components/CurriculumPicker.tsx` | 과제 출제의 '교육과정에서 고르기' |
 | `src/components/LearningProfileCard.tsx`, `src/components/StudentDetail.tsx` | 학생 상세: 학습 프로필 카드, 탭(보충 지도·풀이 기록·개념별 정답률) |
 | `src/components/SupplementPanel.tsx` | 학생 상세 보충 지도 패널 (문항 수 선택 포함) |
