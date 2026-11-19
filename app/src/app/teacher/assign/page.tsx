@@ -33,9 +33,8 @@ const STATUS_BADGE: Record<AssignmentStatus, { label: string; cls: string }> = {
 
 // templateId: 문제은행 틀에서 만든 문항 (교육과정). 문제를 고치면 틀·정답 연결을 뗀다
 // ai: AI 가 만든 문항 초안 (정답을 교사가 확인해야 함)
-// doubt: AI 검산이 어긋난 이유 (정답을 꼭 확인)
 // figure: 문항 그림 (AI 가 만든 설계도 또는 선생님이 올린 이미지)
-type Draft = { key: string; question: string; answer: string; solution: string; concept: string; open: boolean; templateId?: string; ai?: boolean; doubt?: string; figure?: Figure };
+type Draft = { key: string; question: string; answer: string; solution: string; concept: string; open: boolean; templateId?: string; ai?: boolean; figure?: Figure };
 
 const newKey = () => Math.random().toString(36).slice(2, 9);
 const emptyDraft = (question = ""): Draft => ({ key: newKey(), question, answer: "", solution: "", concept: "", open: false });
@@ -204,7 +203,6 @@ export default function AssignPage() {
                     solution: it.solution.join("\n"),
                     ...(it.templateId ? { templateId: it.templateId } : {}),
                     ...(it.source === "ai" ? { ai: true } : {}),
-                    ...(it.doubt ? { doubt: it.doubt, open: true } : {}),
                     ...(it.figure ? { figure: it.figure } : {}),
                   })),
                 ])
@@ -252,9 +250,6 @@ export default function AssignPage() {
                           <>
                             <span className="rounded-full bg-honey-soft px-2.5 py-1 text-olive">AI 초안 · 정답 {d.answer.trim() || "없음"} 확인해 주세요</span>
                             <span className="rounded-full bg-sand px-2.5 py-1 text-muted">{d.concept}</span>
-                            {d.doubt && (
-                              <span className="basis-full rounded-xl bg-salmon-soft px-2.5 py-1.5 text-[#b5624f]">⚠ AI 검산 불일치 — {d.doubt}. 정답을 직접 풀어 확인해 주세요</span>
-                            )}
                           </>
                         ) : s ? (
                           <>

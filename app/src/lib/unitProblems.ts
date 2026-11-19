@@ -8,8 +8,8 @@ import { generateFromTemplate, listTemplates } from "./problemBank";
 //  bank: 그 소단원의 문제은행 틀에서 쉬운 것부터 돌아가며 숫자를 바꿔 생성 (정답은 풀이기로 검증)
 //  ai:   AI(Solar)가 소단원 학습 내용에 맞춰 문항·정답·해설 초안 (정답을 먼저 정하고 거꾸로 만든다)
 //        → 일차방정식이면 풀이기로 정답을 다시 맞추고, 아니면 AI 가 문제만 보고 다시 풀어 검산한다
-//        조건이 모순인 문항·학년 범위를 벗어난 문항은 버리고 (모자라면 한 번 더 만든다),
-//        검산 답만 어긋난 문항은 모자랄 때만 doubt 로 표시해 넣는다
+//        조건이 모순인 문항·학년 범위를 벗어난 문항·검산 답이 어긋난 문항은 모두 버리고
+//        모자라면 새 문항을 다시 만든다 (교사에게는 검산을 통과한 문항만 보낸다)
 export type UnitItem = {
   question: string;
   answer: string;
@@ -17,8 +17,7 @@ export type UnitItem = {
   concept: string;
   templateId?: string;
   source: "bank" | "ai";
-  doubt?: string; // AI 검산이 어긋남 (검산 답·이유). 교사가 꼭 확인
-  reject?: string; // 버릴 문항: 조건 모순·학년 범위 밖 (교사에게 보내지 않음)
+  reject?: string; // 버릴 문항: 조건 모순·학년 범위 밖·검산 불일치 (교사에게 보내지 않음)
   figure?: Figure; // 문항 그림 (좌표·치수가 검사를 통과한 것만)
 };
 
@@ -77,12 +76,12 @@ ${opts.basis.join("\n") || "(없음)"}
 }
 
 async function fromAi(grade: number, unitName: string, lessonName: string, desc: string, count: number, focus = ""): Promise<UnitItem[]> {
-  // 버린 문항 때문에 모자라면 한 번 더 만든다 (최대 2번)
+  // 버린 문항 때문에 모자라면 새로 더 만든다 (최대 3번)
   const items: UnitItem[] = [];
   const seen = new Set<string>();
   // AI 가 JSON 을 깨뜨려 보낸 판(복소수·행렬처럼 기호가 많은 단원에서 가끔)은 버리고 다시 만든다
   let failed: Error | null = null;
-  for (let round = 0; round < 2; round++) {
+  for (let round = 0; round < 3; round++) {
     let got: UnitItem[];
     try {
       got = await aiRound(grade, unitName, lessonName, desc, count, seen, round > 0, focus);
@@ -91,15 +90,10 @@ async function fromAi(grade: number, unitName: string, lessonName: string, desc:
       continue;
     }
     items.push(...got.filter((it) => !it.reject));
-    if (items.filter((it) => !it.doubt).length >= count) break;
+    if (items.length >= count) break;
   }
   if (!items.length) throw failed ?? new Error("AI가 쓸 만한 문항을 만들지 못했어요. 다시 시도해 주세요.");
-  // 검산이 맞는 문항 먼저 (원래 순서 유지), 모자라면 어긋난 문항을 표시해서
-  const ok = items.filter((it) => !it.doubt);
-  const doubtful = items.filter((it) => it.doubt);
-  return [...ok, ...doubtful]
-    .slice(0, count)
-    .sort((a, b) => items.indexOf(a) - items.indexOf(b));
+  return items.slice(0, count);
 }
 
 async function aiRound(grade: number, unitName: string, lessonName: string, desc: string, count: number, seen: Set<string>, retry: boolean, focus = ""): Promise<UnitItem[]> {
@@ -182,7 +176,11 @@ ${FIGURE_PROMPT}
     // 대입 검산식을 코드로 계산 (AI 가 계산을 틀려도 잡힌다)
     if (!checked) {
       const bad = (Array.isArray(it.checks) ? it.checks.map(String) : []).find((c) => checkHolds(c) === false);
-      if (bad) item.doubt = `대입 검산이 맞지 않아요 (${bad})`;
+      if (bad) {
+        item.reject = `대입 검산이 맞지 않음 (${bad})`;
+        items.push(item);
+        continue;
+      }
     }
     items.push(item);
     if (checked) solved.add(item);
@@ -192,8 +190,8 @@ ${FIGURE_PROMPT}
 }
 
 // AI 검산: 처음 정답을 보여 주지 않고 문제만 다시 풀게 한다 (정답을 보여 주면 거기에 맞춰 버림)
-//  → 두 답에 나온 숫자를 비교. 다르면 doubt, 숫자가 없는 답(말로 된 답)은 판단하지 않는다
-//  검산 쪽도 조건이 모순되는 문제(답이 없거나 여러 개)를 찾으면 doubt
+//  → 두 답에 나온 숫자를 비교. 다르면 버린다, 숫자가 없는 답(말로 된 답)은 판단하지 않는다
+//  검산 쪽도 조건이 모순되는 문제(답이 없거나 여러 개)를 찾으면 버린다
 async function crossCheck(grade: number, items: UnitItem[]) {
   if (!items.length) return;
   const system = `너는 ${gradeName(grade)} 수학 문제를 처음 보는 학생처럼 직접 푸는 검산 도우미다.
@@ -211,11 +209,11 @@ async function crossCheck(grade: number, items: UnitItem[]) {
     };
     for (const r of parsed.results ?? []) {
       const it = items[Number(r.no) - 1];
-      if (!it || it.doubt || it.reject) continue;
+      if (!it || it.reject) continue;
       const theirs = String(r.answer ?? "");
       // 조건 모순·학년 범위 밖은 교사에게 보내지 않고 버린다
       if (String(r.problem ?? "").trim()) it.reject = String(r.problem).trim();
-      else if (sameNumbers(it.answer, theirs) === false) it.doubt = `다시 풀어 보니 ${theirs}`;
+      else if (sameNumbers(it.answer, theirs) === false) it.reject = `검산 불일치: 다시 풀어 보니 ${theirs}`;
     }
   } catch {
     // 검산 호출이 실패하면 표시 없이 둔다 (AI 초안 확인 안내는 그대로)
