@@ -156,6 +156,7 @@ export type Submission = {
   problemAnswer?: string; // 문항에 선생님이 정한 정답 (교사 화면: 학생 답과 나란히)
   answerText?: string; // 답안 칸에 따로 쓴 최종 답
   answerCorrect?: boolean | null; // 답안 칸 답이 정답과 같은지 (null: 비교할 수 없음)
+  hasScratch?: boolean; // 연습장 필기가 있음 (이미지는 /api/submissions/{id}/scratch)
   startedAt: number;
   submittedAt: number;
   strokes: Stroke[];

@@ -3,7 +3,7 @@ import StudentApp, { type MyResult } from "@/components/StudentApp";
 import { getAssignment, studentCanSee } from "@/lib/assignments";
 import { studentCurrentClassIds } from "@/lib/classes";
 import { getSession } from "@/lib/session";
-import { latestAnswers, latestStrokes, listSubmissions } from "@/lib/store";
+import { latestAnswers, latestScratch, latestStrokes, listSubmissions } from "@/lib/store";
 import { statusOf } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -60,7 +60,8 @@ export default async function SolvePage({ params }: { params: Promise<{ assignme
     }
   // 아직 열린 과제: 이미 낸 문항은 마지막 풀이를 캔버스에 그대로 띄워서 그 위에서 고친다
   const ids = assignment.problems.map((p) => p.id);
-  const [strokes, answers] = st === "closed" ? [{}, {}] : await Promise.all([latestStrokes(session.id, ids), latestAnswers(session.id, ids)]);
+  const [strokes, answers, scratch] =
+    st === "closed" ? [{}, {}, {}] : await Promise.all([latestStrokes(session.id, ids), latestAnswers(session.id, ids), latestScratch(session.id, ids)]);
   return (
     <StudentApp
       key={assignment.id}
@@ -71,6 +72,7 @@ export default async function SolvePage({ params }: { params: Promise<{ assignme
       initialDone={done}
       initialStrokes={strokes}
       initialAnswers={answers}
+      initialScratch={scratch}
       closed={st === "closed"}
       results={st === "closed" ? results : undefined}
       dueAt={st === "closed" ? undefined : assignment.dueAt}

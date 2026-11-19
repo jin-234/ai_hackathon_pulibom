@@ -34,6 +34,9 @@ struct StudentShellView: View {
             )
             .overlay(alignment: .top) { RefreshBadge(pull: web.pull, refreshing: web.refreshing) }
             .clipped()
+            // 키보드가 올라와도 웹 화면은 줄이지 않는다 (줄이면 '나의 풀이' 칸이 쪼그라듦).
+            // 키보드는 위에 덮이고, 입력칸은 WKWebView 가 스스로 키보드 위로 올려 보여 준다
+            .ignoresSafeArea(.keyboard, edges: .bottom)
             if onList {
                 tabBar.transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -260,6 +263,11 @@ struct StudentShellView: View {
                 .background(Color.paper, in: Capsule())
                 .overlay(Capsule().stroke(Color.line, lineWidth: 1))
             }
+            // 로그아웃 확인: 이름 캡슐 바로 밑에 화살표 달린 팝오버로 띄운다
+            .popover(isPresented: $confirmLogout, arrowEdge: .top) {
+                logoutConfirm
+                    .presentationCompactAdaptation(.popover)
+            }
         }
         .padding(.horizontal, 20)
         .frame(height: 64)
@@ -276,15 +284,42 @@ struct StudentShellView: View {
         }
         .background(Color.cream)
         .overlay(alignment: .bottom) { Rectangle().fill(Color.line).frame(height: 1) }
-        .confirmationDialog("\(student.name) 학생, 로그아웃할까요?", isPresented: $confirmLogout, titleVisibility: .visible) {
-            Button("로그아웃", role: .destructive) {
-                Task {
-                    await PulibomAPI.clearLogin()
-                    onLoggedOut()
+    }
+
+    private var logoutConfirm: some View {
+        VStack(spacing: 14) {
+            Text("\(student.name) 학생, 로그아웃할까요?")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.ink)
+            HStack(spacing: 10) {
+                Button { confirmLogout = false } label: {
+                    Text("취소")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.ink)
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                        .background(Color.paper, in: Capsule())
+                        .overlay(Capsule().stroke(Color.line, lineWidth: 1))
                 }
+                .buttonStyle(.pressable)
+                Button {
+                    confirmLogout = false
+                    Task {
+                        await PulibomAPI.clearLogin()
+                        onLoggedOut()
+                    }
+                } label: {
+                    Text("로그아웃")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                        .background(Color.salmonDeep, in: Capsule())
+                }
+                .buttonStyle(.pressable)
             }
-            Button("취소", role: .cancel) {}
         }
+        .padding(18)
+        .frame(width: 280)
+        .background(Color.cream)
     }
 }
 

@@ -542,6 +542,13 @@ export function SubmissionCard({
             className="rounded-xl border border-line"
           />
         )}
+        {s.hasScratch && (
+          <details className="rounded-xl border border-line px-3 py-2 text-xs">
+            <summary className="cursor-pointer text-muted">연습장 보기 (그림·계산, AI 채점 안 함)</summary>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={`/api/submissions/${s.id}/scratch`} alt="연습장" loading="lazy" className="mt-2 rounded-lg border border-line bg-white" />
+          </details>
+        )}
         <div className="text-xs text-muted">
           {stats.durationSec}초 · 지움 {stats.erases}회
           {stats.idleSec > 0 && ` · 멈춤 ${stats.idleSec}초`}
