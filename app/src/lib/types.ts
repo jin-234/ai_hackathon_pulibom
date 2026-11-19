@@ -1,6 +1,7 @@
 // 공통 타입 정의
 import type { SchoolStage } from "./concepts";
 import type { Figure } from "./figure";
+import type { ProblemFormat } from "./problemFormat";
 
 export type ErrorType =
   | "SIGN" // 부호·정수 계산 (음수가 낀 계산)
@@ -129,6 +130,7 @@ export type Problem = {
   solution: string[]; // 교사 검토 해설 (단계별)
   templateId?: string; // 문제은행 틀에서 만든 문항이면 그 틀
   figure?: Figure; // 문항 그림 (설계도 또는 선생님이 올린 이미지)
+  format?: ProblemFormat; // 객관식 / 서술형 (없으면 문제 글로 짐작: formatOf)
 };
 
 export type Point = { x: number; y: number; t: number };
