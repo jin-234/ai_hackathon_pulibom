@@ -4,6 +4,7 @@ import { findProblemWithAssignment, studentCanSee } from "@/lib/assignments";
 import { canEditSubmission, canSeeSubmission, studentCurrentClassIds } from "@/lib/classes";
 import { requireStudentAccess } from "@/lib/guard";
 import { getStudent } from "@/lib/roster";
+import { checkAnswer } from "@/lib/answerCheck";
 import { listSubmissions, saveSubmission } from "@/lib/store";
 import { runPipeline } from "@/lib/pipeline";
 import { getSession } from "@/lib/session";
@@ -36,6 +37,7 @@ type Body = {
   strokes: Stroke[];
   events: InkEvent[];
   imageDataUrl: string; // data:image/png;base64,...
+  answerText?: string; // 답안 칸에 쓴 최종 답
 };
 
 // 학생 풀이 제출 → 저장 → (백그라운드) OCR + 분석
@@ -55,6 +57,8 @@ export async function POST(req: Request) {
   }
 
   const id = `${Date.now()}-${randomUUID().slice(0, 8)}`;
+  // 답안 칸 답은 바로 정답과 비교해 둔다
+  const answerText = typeof body.answerText === "string" ? body.answerText.trim().slice(0, 100) : "";
   const png = Buffer.from(body.imageDataUrl.replace(/^data:image\/png;base64,/, ""), "base64");
 
   const submission: Submission = {
@@ -68,6 +72,8 @@ export async function POST(req: Request) {
     events: body.events,
     ocrLines: [],
     status: "pending",
+    ...(answerText ? { answerText } : {}),
+    answerCorrect: checkAnswer(answerText, problem.answer),
   };
   await saveSubmission(submission, png);
 
