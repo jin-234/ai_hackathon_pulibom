@@ -10,6 +10,7 @@ import { pickFromBank } from "./problemBank";
 import { env } from "./env";
 import { PROBLEMS } from "./problems";
 import { listSubmissions } from "./store";
+import { correctOf } from "./verdict";
 import { getSummary } from "./summary";
 import {
   ERROR_LABEL,
@@ -70,7 +71,7 @@ export type SupplementDraft = {
 function wrongOf(studentId: string, subs: Submission[], problems: Map<string, Problem>) {
   const latest = new Map<string, Submission>();
   for (const s of subs.filter((x) => x.studentId === studentId).sort((a, b) => a.submittedAt - b.submittedAt)) latest.set(s.problemId, s);
-  return [...latest.values()].filter((s) => problems.has(s.problemId) && (s.analysis?.correct === false || errorOf(s)));
+  return [...latest.values()].filter((s) => problems.has(s.problemId) && (correctOf(s) === false || errorOf(s)));
 }
 
 // 가장 많이 나온 오류. skip(이미 극복한 오류)은 다른 오류가 있으면 건너뛴다
@@ -404,6 +405,10 @@ export type SupplementProgress = {
   review?: SupplementReview;
 };
 
+// 보충 전 근거 풀이 id (예전에 검사 없이 저장된 값이 배열이 아니어도 깨지지 않게)
+const sourceIds = (sup: { sourceSubmissionIds?: unknown }) =>
+  Array.isArray(sup.sourceSubmissionIds) ? sup.sourceSubmissionIds.filter((x): x is string => typeof x === "string") : [];
+
 // 이 학생이 보충 문항을 푼 결과 (문항별 최신)
 function afterOf(a: Assignment, subs: Submission[], studentId: string) {
   const latest = new Map<string, Submission>();
@@ -421,9 +426,9 @@ export async function supplementProgress(studentId: string): Promise<SupplementP
     .map((a) => {
       const sup = a.supplement!;
       // 그룹 보충이면 근거 풀이 중 이 학생 것만
-      const before = sup.sourceSubmissionIds.map((id) => byId.get(id)).filter((s): s is Submission => !!s);
+      const before = sourceIds(sup).map((id) => byId.get(id)).filter((s): s is Submission => !!s);
       const after = afterOf(a, subs, studentId);
-      const judged = after.filter((s) => typeof s.analysis?.correct === "boolean");
+      const judged = after.filter((s) => correctOf(s) !== null);
       return {
         id: a.id,
         title: a.title,
@@ -435,7 +440,7 @@ export async function supplementProgress(studentId: string): Promise<SupplementP
         ...(sup.studentIds?.length ? { group: { name: sup.group ?? sup.concept, size: sup.studentIds.length } } : {}),
         before: {
           count: before.length,
-          wrong: before.filter((s) => s.analysis?.correct === false).length,
+          wrong: before.filter((s) => correctOf(s) === false).length,
           targetErrors: before.filter((s) => sup.targetError && errorOf(s) === sup.targetError).length,
           items: before.map((s) => problems.get(s.problemId)?.question ?? s.question ?? ""),
         },
@@ -443,7 +448,7 @@ export async function supplementProgress(studentId: string): Promise<SupplementP
           total: a.problems.length,
           submitted: after.length,
           judged: judged.length,
-          correct: judged.filter((s) => s.analysis!.correct).length,
+          correct: judged.filter((s) => correctOf(s)).length,
           targetErrors: after.filter((s) => sup.targetError && errorOf(s) === sup.targetError).length,
           review: after.filter((s) => s.status === "needs_review" || s.status === "error").length,
         },
@@ -468,7 +473,8 @@ export async function reviewSupplement(assignmentId: string, studentId?: string)
   const line = (s: Submission) => {
     const p = problems.get(s.problemId);
     const lines = (s.analysis?.correctedLines?.length ? s.analysis.correctedLines : s.ocrLines).join(" → ") || "(인식 실패)";
-    const verdict = s.analysis ? (s.analysis.correct === null ? "판정 보류" : s.analysis.correct ? "정답" : "오답") : "분석 실패";
+    const ok = correctOf(s);
+    const verdict = !s.analysis && !s.teacher?.confirmedAt ? "분석 실패" : ok === null ? "판정 보류" : ok ? "정답" : "오답";
     const e = errorOf(s);
     const unreadable = s.status === "needs_review" || s.status === "error" ? " ⚠판독 어려움" : "";
     return `- ${p?.question ?? s.question}: ${lines} [${verdict}${e ? `, ${ERROR_LABEL[e]}` : ""}${unreadable}]${s.teacher?.memo ? ` 교사 메모: ${s.teacher.memo}` : ""}`;
@@ -482,7 +488,7 @@ export async function reviewSupplement(assignmentId: string, studentId?: string)
 - 교사에게 존댓말(~요)로, 학생은 '학생'이라고 부른다. JSON만 출력.`;
   const user = `[보충 개념] ${sup.concept} / [목표 오류] ${sup.targetError ? ERROR_LABEL[sup.targetError] : "특정되지 않음"}
 [보충 전 풀이]
-${sup.sourceSubmissionIds.map((id) => byId.get(id)).filter((s): s is Submission => !!s).map(line).join("\n") || "(기록 없음)"}
+${sourceIds(sup).map((id) => byId.get(id)).filter((s): s is Submission => !!s).map(line).join("\n") || "(기록 없음)"}
 [보충 문항 풀이 (문항별 최신)]
 ${after.map(line).join("\n")}
 (보충 문항 ${a.problems.length}개 중 ${after.length}개 제출)

@@ -10,6 +10,7 @@ import MessageThread from "@/components/MessageThread";
 import SupplementPanel from "@/components/SupplementPanel";
 import { solveLinear } from "@/lib/equation";
 import { getProblem } from "@/lib/problems";
+import { correctOf } from "@/lib/verdict";
 import { ERROR_LABEL, LOW_OCR_CONFIDENCE, handwritingIssue, hasHandwritingIssue, inkStats, type ClassStats, type ErrorType, type StudentStats, type Submission } from "@/lib/types";
 
 // 학생 상세: 개념별 이해도 → AI 요약(짧게) → 탭 [풀이 기록 | 보충 지도]
@@ -17,7 +18,7 @@ import { ERROR_LABEL, LOW_OCR_CONFIDENCE, handwritingIssue, hasHandwritingIssue,
 //  - stats 를 넘기면 그 지표를, 없으면 실제 제출 지표를 직접 불러온다
 //  - start: 처음 열 탭·풀이 필터 (예: 표의 '확인 n' 배지 → 풀이 기록 · 확인 필요)
 //  - 풀이는 학년도·반별로 묶는다. 지금 담당 반 학생이면 지난 학년 기록까지 보이고, 지난 기록은 읽기 전용
-type History = { student: { id: string; name: string }; access: "current" | "past"; submissions: Submission[] };
+type History = { student: { id: string; name: string }; access: "current" | "past"; classId?: string | null; submissions: Submission[] };
 export type DetailTab = "subs" | "supplement" | "messages";
 export type SubFilter = "all" | "wrong" | "review";
 const fmtSec = (sec: number) => (sec >= 60 ? `${Math.floor(sec / 60)}분 ${sec % 60}초` : `${sec}초`);
@@ -48,13 +49,16 @@ export default function StudentDetail({
   const tabsRef = useRef<HTMLDivElement>(null);
   const jumped = useRef(!start?.filter);
 
+  // 지표를 받지 않았으면 (학생 상세 페이지로 바로 들어옴) 이 학생 반의 지표를 불러온다.
+  //  반을 정하지 않으면 서버가 선생님의 첫 반을 골라, 다른 반 학생은 지표가 비어 보였다
+  const classId = info?.classId;
   useEffect(() => {
-    if (stats) return;
-    fetch("/api/class-stats")
+    if (stats || !classId) return;
+    fetch(`/api/class-stats?class=${encodeURIComponent(classId)}`)
       .then((r) => r.json())
-      .then((d: ClassStats) => setFetched(d.students.find((s) => s.id === id)))
+      .then((d: ClassStats) => setFetched(d.students?.find((s) => s.id === id)))
       .catch(() => {});
-  }, [id, stats, subs.length]);
+  }, [id, stats, classId, subs.length]);
 
   useEffect(() => {
     const load = () =>
@@ -63,7 +67,7 @@ export default function StudentDetail({
         .then((d: History | { error: string }) => {
           if ("error" in d) return setLoadError(d.error);
           setSubs(d.submissions);
-          setInfo({ student: d.student, access: d.access });
+          setInfo({ student: d.student, access: d.access, classId: d.classId });
           setLoadError("");
         })
         .catch(() => {});
@@ -200,9 +204,9 @@ type Filter = SubFilter;
 const resultOf = (s: Submission) =>
   s.status === "pending"
     ? { label: "분석 중", cls: "bg-honey-soft text-olive" }
-    : s.analysis?.correct === true
+    : correctOf(s) === true
       ? { label: "정답", cls: "bg-sage-soft text-[#5d7a50]" }
-      : s.analysis?.correct === false
+      : correctOf(s) === false
         ? { label: "오답", cls: "bg-salmon-soft text-[#b5624f]" }
         : { label: "판정 보류", cls: "bg-sand text-muted" };
 
@@ -221,9 +225,9 @@ function SubmissionList({
   const [open, setOpen] = useState<string | null>(null);
   const [toggled, setToggled] = useState<Set<string>>(new Set()); // 펼침 기본값(필터에 따라)에서 바꾼 항목
   const match = (s: Submission) =>
-    filter === "all" ? true : filter === "wrong" ? s.analysis?.correct === false : s.status === "needs_review" && !s.teacher?.confirmedAt;
+    filter === "all" ? true : filter === "wrong" ? correctOf(s) === false : s.status === "needs_review" && !s.teacher?.confirmedAt;
   const all = groups.flatMap((g) => g.items);
-  const count = (f: Filter) => all.filter((s) => (f === "all" ? true : f === "wrong" ? s.analysis?.correct === false : s.status === "needs_review" && !s.teacher?.confirmedAt)).length;
+  const count = (f: Filter) => all.filter((s) => (f === "all" ? true : f === "wrong" ? correctOf(s) === false : s.status === "needs_review" && !s.teacher?.confirmedAt)).length;
 
   if (empty) return <div className="rounded-3xl border border-dashed border-line p-6 text-center text-sm text-muted">아직 제출한 풀이가 없어요.</div>;
 
@@ -266,8 +270,8 @@ function SubmissionList({
               const key = `${g.key}:${c.name}`;
               // 틀린 풀이·확인 필요로 걸러 보는 중이면 처음부터 펼쳐 둔다
               const isOpen = toggled.has(key) !== (filter !== "all");
-              const correct = c.items.filter((x) => x.analysis?.correct === true).length;
-              const wrong = c.items.filter((x) => x.analysis?.correct === false).length;
+              const correct = c.items.filter((x) => correctOf(x) === true).length;
+              const wrong = c.items.filter((x) => correctOf(x) === false).length;
               const rest = c.items.length - correct - wrong;
               const review = c.items.filter((x) => x.status === "needs_review" && !x.teacher?.confirmedAt).length;
               // 번호 칸: 오래된 풀이부터 1번
@@ -306,9 +310,9 @@ function SubmissionList({
                           const r = resultOf(x);
                           const needs = x.status === "needs_review" && !x.teacher?.confirmedAt;
                           const tone =
-                            x.analysis?.correct === true && x.status !== "pending"
+                            correctOf(x) === true && x.status !== "pending"
                               ? "border-sage/40 bg-sage-soft text-[#5d7a50]"
-                              : x.analysis?.correct === false && x.status !== "pending"
+                              : correctOf(x) === false && x.status !== "pending"
                                 ? "border-[#b5624f]/30 bg-salmon-soft text-[#b5624f]"
                                 : "border-line bg-sand text-muted";
                           return (
@@ -338,7 +342,7 @@ function SubmissionList({
                                 <span className="min-w-0 flex-1 truncate">
                                   <QuestionText text={x.question ?? getProblem(x.problemId)?.question ?? ""} />
                                 </span>
-                                {x.analysis?.correct === false && err && err !== "NONE" && <span className="text-xs text-[#b5624f]">{ERROR_LABEL[err]}</span>}
+                                {correctOf(x) === false && err && err !== "NONE" && <span className="text-xs text-[#b5624f]">{ERROR_LABEL[err]}</span>}
                                 {hasHandwritingIssue(x) && (
                                   <span className="rounded-full bg-honey-soft px-2 py-0.5 text-xs text-olive" title="OCR·AI 모두 이 풀이를 제대로 읽지 못했어요. 원본 풀이와 비교해 주세요.">
                                     ✎ 글씨체
@@ -608,6 +612,7 @@ export function SubmissionCard({
             </select>
             <textarea
               value={memo}
+              maxLength={2000}
               onChange={(e) => setMemo(e.target.value)}
               placeholder="학생에게 남길 말 (과제가 마감되면 학생도 봐요)"
               className="min-h-16 rounded-lg border border-line px-3 py-2"

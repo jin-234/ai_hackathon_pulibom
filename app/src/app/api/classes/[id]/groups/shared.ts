@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { activeMemberIds, teacherClass } from "@/lib/classes";
 import { requireTeacher } from "@/lib/guard";
-import { ERROR_LABEL, type ErrorType } from "@/lib/types";
+import { asErrorType } from "@/lib/types";
 
 // 소그룹 보충 공통 확인: 내 올해 반 + 학생이 모두 지금 그 반 소속
 export async function requireGroup(classId: string, studentIds: unknown) {
@@ -17,4 +17,4 @@ export async function requireGroup(classId: string, studentIds: unknown) {
   return { session: t.session, cls, studentIds: ids };
 }
 
-export const asErrorType = (v: unknown): ErrorType | null => (typeof v === "string" && v in ERROR_LABEL ? (v as ErrorType) : null);
+export { asErrorType };

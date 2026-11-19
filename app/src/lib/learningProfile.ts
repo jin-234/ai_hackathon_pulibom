@@ -3,6 +3,7 @@ import { conceptWords, listTemplates, type Template } from "./problemBank";
 import { DEFAULT_SETTINGS } from "./classSettings";
 import { studentSettings } from "./settings";
 import { listSubmissions } from "./store";
+import { correctOf } from "./verdict";
 import { ERROR_LABEL, type ErrorType, type Submission } from "./types";
 
 // 학습 프로필: 학생이 지금까지 푼 기록에서 '이미 된 것'을 찾아 다음 문제 선택에 다시 반영한다
@@ -51,9 +52,9 @@ async function problemInfo(templates: Template[]) {
 
 export function buildProfile(subs: Submission[], problems: Map<string, ProblemInfo>, templates: Template[], mastery = MASTERY): LearningProfile {
   const judged = subs
-    .filter((s) => typeof s.analysis?.correct === "boolean")
+    .filter((s) => correctOf(s) !== null)
     .sort((a, b) => a.submittedAt - b.submittedAt);
-  const ok = (s: Submission) => s.analysis!.correct === true && !errorOf(s);
+  const ok = (s: Submission) => correctOf(s) === true && !errorOf(s);
 
   // ── 오류별: 마지막으로 나온 뒤 그 오류를 연습하는 문항의 연속 정답 ──
   const seenErrors = [...new Set(judged.map(errorOf).filter((e): e is ErrorType => !!e))];
@@ -94,7 +95,7 @@ export function buildProfile(subs: Submission[], problems: Map<string, ProblemIn
     if (!c) continue;
     const v = concepts.get(c) ?? { correct: 0, judged: 0 };
     v.judged++;
-    v.correct += s.analysis!.correct ? 1 : 0;
+    v.correct += correctOf(s) ? 1 : 0;
     concepts.set(c, v);
   }
   const strong = [...concepts]

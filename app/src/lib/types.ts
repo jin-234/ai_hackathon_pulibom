@@ -43,6 +43,9 @@ export const ERROR_LABEL: Record<ErrorType, string> = {
   NONE: "오류 없음",
 };
 
+// 밖에서 받은 값이 오류 유형 코드인지 확인 (아니면 null)
+export const asErrorType = (v: unknown): ErrorType | null => (typeof v === "string" && Object.hasOwn(ERROR_LABEL, v) ? (v as ErrorType) : null);
+
 // 문항의 미지수: 중학교에서 자주 쓰는 x, y, a, b, m, n, i 중 문항(정답 'y=3' 또는 문제)에 나온 글자.
 // 문자가 없는 계산 문항이면 "" (× 를 x 로 바꾸지 않게). cm·kg 처럼 두 글자 이상 붙은 단위는 빼고 한 글자로 떨어진 것만 센다
 const VARIABLES = ["x", "y", "a", "b", "m", "n", "i"];
@@ -129,7 +132,8 @@ export type InkEvent =
   | { type: "erase"; strokeId: string; t: number }
   | { type: "undo"; strokeId: string; t: number }
   | { type: "clear"; t: number }
-  | { type: "hidden" | "visible"; t: number };
+  | { type: "hidden" | "visible"; t: number }
+  | { type: "leave" | "return"; t: number }; // 다른 문항으로 갔다가 돌아옴 (그 사이는 풀이 시간·멈춤에서 뺀다)
 
 export type AnalysisStatus = "pending" | "done" | "needs_review" | "error";
 
@@ -180,14 +184,21 @@ export type SubmissionOrigin = {
 
 // 학습 로그에서 계산한 보조 지표
 export function inkStats(s: Pick<Submission, "startedAt" | "submittedAt" | "events">) {
-  const durationSec = Math.round((s.submittedAt - s.startedAt) / 1000);
   const erases = s.events.filter((e) => e.type === "erase" || e.type === "undo" || e.type === "clear").length;
-  const times = [s.startedAt, ...s.events.map((e) => e.t), s.submittedAt].sort((a, b) => a - b);
+  // 시간 순 기록. leave 다음 구간(다른 문항에 가 있던 시간)은 이 문항을 푼 시간이 아니다
+  const times = [
+    { t: s.startedAt, leave: false },
+    ...s.events.map((e) => ({ t: e.t, leave: e.type === "leave" })),
+    { t: s.submittedAt, leave: false },
+  ].sort((a, b) => a.t - b.t);
+  let awayMs = 0;
   let idleSec = 0;
   for (let i = 1; i < times.length; i++) {
-    const gap = (times[i] - times[i - 1]) / 1000;
-    if (gap >= 30) idleSec += gap; // 30초 이상 무입력 구간
+    const gap = times[i].t - times[i - 1].t;
+    if (times[i - 1].leave) awayMs += gap;
+    else if (gap >= 30000) idleSec += gap / 1000; // 30초 이상 무입력 구간
   }
+  const durationSec = Math.round((s.submittedAt - s.startedAt - awayMs) / 1000);
   const hiddenCount = s.events.filter((e) => e.type === "hidden").length;
   return { durationSec, erases, idleSec: Math.round(idleSec), hiddenCount };
 }
