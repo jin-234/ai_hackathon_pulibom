@@ -1,4 +1,4 @@
-import { chat, ERROR_GUIDE, TEACHER_PICKS } from "./ai";
+import { chat, ERROR_GUIDE, SURVEY_RESPONDENTS, TEACHER_PICKS } from "./ai";
 import { listAssignments } from "./assignments";
 import { statsForStudent } from "./classStats";
 import { getStudent } from "./roster";
@@ -12,7 +12,7 @@ import { query } from "./db";
 // 학생 이름 등 식별정보는 보내지 않는다.
 const MAX_SUBMISSIONS = 30;
 // 요약 프롬프트를 바꾸면 올린다 (예전 프롬프트로 만든 요약은 '새로 요약 필요'로 보이게)
-const PROMPT_VERSION = "9";
+const PROMPT_VERSION = "10";
 // AI 에 넘기는 실수 유형 이름: 교사 설문에 있는 유형은 그 이름으로 (요약이 같은 이름으로 부르게)
 const typeName = (t: ErrorType) => TEACHER_PICKS.find((p) => p.type === t)?.name ?? ERROR_LABEL[t];
 
@@ -43,6 +43,9 @@ export async function getSummary(studentId: string): Promise<{ summary: StudentS
 
 const linesOf = (s: Submission) => (s.analysis?.correctedLines?.length ? s.analysis.correctedLines : s.ocrLines);
 
+// 중간 과정 없이 답 한 줄만 쓴 풀이 (설문에서 12명이 '어디서 틀렸는지 확인하기 어렵다'고 꼽음). 수학 실수가 아니라 코드가 센다
+const skippedSteps = (s: Submission) => linesOf(s).filter((l) => l.trim()).length === 1;
+
 // 첫 오류 줄과 그 앞 줄 (채점 때 AI 가 짚은 줄. 없으면 null)
 function wrongLineOf(s: Submission): { wrongLine: string; prevLine?: string } | null {
   const lines = linesOf(s);
@@ -72,6 +75,7 @@ function describe(s: Submission, p: Problem, attemptNo: number, no: number) {
     hasHandwritingIssue(s)
       ? `  ✎ 글씨체 문제: ${handwritingIssue(s).nothingRead ? "OCR 이 이 풀이를 하나도 읽지 못했다" : `OCR 이 이 풀이의 ${handwritingIssue(s).lines.length}줄을 이상하게 읽었다 (인식이 틀렸을 수 있다)`}`
       : "",
+    skippedSteps(s) ? `  ⤳ 중간 과정 없이 답만 씀` : "",
     s.teacher?.memo ? `  교사 관찰 메모: ${s.teacher.memo}` : "",
     `  풀이 시간 ${st.durationSec}초, 지운 횟수 ${st.erases}회`,
   ]
@@ -103,6 +107,17 @@ function handwritingCaution(subs: Submission[], problems: Map<string, Problem>):
   if (odd.length < 2 && odd.length / Math.max(subs.length, 1) < 0.3) return [];
   const ex = [...new Set(odd.map((s) => problems.get(s.problemId)?.question ?? s.question ?? ""))].filter(Boolean).slice(0, 2).join(", ");
   return [`글씨체 문제: 풀이 ${subs.length}개 중 ${odd.length}개를 OCR 이 제대로 읽지 못했어요${ex ? ` (예: ${ex})` : ""}. 원본 풀이를 확인하고, x·숫자·부호를 또박또박 쓰도록 지도해 주세요.`];
+}
+
+// 과정 생략: 답만 쓴 풀이가 2개 이상이거나 전체의 30% 이상이면 교사가 확인할 점으로 넣는다 (글씨체와 같은 기준, 코드가 정해 늘 같게)
+function skippedStepsCaution(subs: Submission[], problems: Map<string, Problem>): string[] {
+  const skipped = subs.filter(skippedSteps);
+  if (skipped.length < 2 && skipped.length / Math.max(subs.length, 1) < 0.3) return [];
+  const wrong = skipped.filter((s) => s.analysis?.correct === false).length;
+  const ex = [...new Set(skipped.map((s) => problems.get(s.problemId)?.question ?? s.question ?? ""))].filter(Boolean).slice(0, 2).join(", ");
+  return [
+    `과정 생략: 풀이 ${subs.length}개 중 ${skipped.length}개를 중간 식 없이 답만 썼어요${ex ? ` (예: ${ex})` : ""}${wrong ? `. 그중 ${wrong}개는 틀렸는데 어디서 틀렸는지 알 수 없어요` : ""}. 암산하지 말고 중간 식을 한 줄씩 쓰도록 지도해 주세요.`,
+  ];
 }
 
 // DB 없이 풀이 기록만으로 요약 (프롬프트 테스트: scripts/test-weakness.ts 에서도 쓴다)
@@ -193,8 +208,8 @@ export async function summarize(input: {
 3단계: 서로 다른 문항에서 되풀이된 실수를 이 학생의 약점으로 본다. "음수 계산에서 부호를 자주 틀려요", "이항할 때 부호를 바꾸지 않아요"처럼 교사가 한눈에 알 수 있는 말로 쓴다.
 4단계: 약점마다 근거가 되는 식을 인용하고, 교사가 확인할 질문과 보충 연습 방향을 정한다.
 
-[교사들이 많이 꼽은 실수 유형] 중1 교사 설문에서 풀이에서 잡아 주면 좋겠다고 많이 고른 순서다. 학생의 실수가 여기에 해당하면 이 이름으로 부른다.
-${TEACHER_PICKS.map((p) => `- ${p.type} "${p.name}": ${ERROR_GUIDE[p.type]}`).join("\n")}
+[교사들이 많이 꼽은 실수 유형] 수학을 가르쳐 본 ${SURVEY_RESPONDENTS}명에게 학생 풀이에서 실제로 본 실수를 물은 설문에서 많이 고른 순서다. 학생의 실수가 여기에 해당하면 이 이름으로 부른다.
+${TEACHER_PICKS.map((p) => `- ${p.type} "${p.name}" (${SURVEY_RESPONDENTS}명 중 ${p.picked}명): ${ERROR_GUIDE[p.type]}`).join("\n")}
 
 규칙:
 - overview 첫 문장에 이 학생의 가장 큰 약점(실수 유형)을 바로 쓴다. 뚜렷한 약점이 없으면 그렇다고 쓴다.
@@ -218,6 +233,8 @@ ${
 - 한두 번의 오답만으로 '개념 부족'을 단정하지 말고 "확인이 필요해 보인다"처럼 쓴다. 서로 다른 문항에서 반복된 오류를 더 중요하게 본다.
 - 판독이 어렵다고 표시된 풀이는 판단 근거로 쓰지 말고 cautions 에 "원본 확인 필요"로 적는다.
 - ✎ 글씨체 문제 표시는 수학 실수가 아니다. 약점(weakConcepts)으로 세지 않고, 글씨 이야기는 프로그램이 cautions 에 따로 넣으니 쓰지 않는다. 그 풀이의 식이 이상하면 인식 문제일 수 있으니 실수로 단정하지 않는다.
+- ⤳ 중간 과정 없이 답만 씀 표시도 수학 실수가 아니다. 약점으로 세지 않고, 과정 생략 이야기는 프로그램이 cautions 에 따로 넣으니 쓰지 않는다. 답만 쓰고 틀린 풀이로 어떤 실수인지 짐작하지 않는다.
+- COPY(옮겨 적기 실수)는 계산을 몰라서가 아니라 옮겨 적다 생긴 실수다. 개념 부족으로 쓰지 말고, practice 에는 문제를 옮겨 쓴 첫 줄과 마지막 답을 문제·앞 줄과 대조하는 습관을 쓴다.
 - 교사 관찰 메모와 교사가 확인한 오류 유형을 AI 판정보다 우선한다.
 - 풀이 시간이 길다는 것만으로 이해 부족이라고 판단하지 않는다.
 - 다시 푼 문항이 있으면 처음과 비교해 달라진 점을 strengths 나 overview 에 쓴다.
@@ -263,8 +280,14 @@ ${records}
       })),
     checkQuestions: arr(p.checkQuestions),
     practice: arr(p.practice),
-    // 글씨 안내는 코드가 넣으므로 AI 가 쓴 글씨 이야기는 뺀다 (같은 말이 두 번 나오지 않게)
-    cautions: [...arr(p.cautions).filter((c) => !handwritingCaution(subs, problems).length || !/글씨|OCR/.test(c)), ...handwritingCaution(subs, problems)].slice(0, 6),
+    // 글씨·과정 생략 안내는 코드가 넣으므로 AI 가 쓴 같은 이야기는 뺀다 (같은 말이 두 번 나오지 않게)
+    cautions: [
+      ...arr(p.cautions).filter(
+        (c) => (!handwritingCaution(subs, problems).length || !/글씨|OCR/.test(c)) && (!skippedStepsCaution(subs, problems).length || !/생략|과정 없이|답만/.test(c)),
+      ),
+      ...handwritingCaution(subs, problems),
+      ...skippedStepsCaution(subs, problems),
+    ].slice(0, 6),
   };
   return summary;
 }
