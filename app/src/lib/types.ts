@@ -145,6 +145,9 @@ export type Analysis = {
   errorType: ErrorType;
   concept: string;
   errorConcept?: string; // 처음 틀린 줄에서 쓰던 개념 (예: 이차방정식 문항인데 인수분해 단계에서 틀림 → '인수분해'). 보충 문항의 개념
+  // 틀린 단계가 전 학년 개념 목록(concepts.ts)의 어느 소단원인지 (예: 고2 문항인데 판별식을 틀림 → '4-2-2' 고1 이차방정식).
+  // null: 정답·습관 실수·못 고름. undefined: 이 기능 전의 예전 채점
+  errorLessonId?: string | null;
   reason: string;
   suggestion: string;
   needsReview: boolean;
@@ -329,4 +332,7 @@ export type StudentSummary = {
   cautions: string[]; // 판독 어려움·근거 부족 등 교사가 직접 확인할 점
   // 고등학생: 틀린 풀이를 다시 봐야 할 중학 기초 테마로 묶은 것 (foundations.ts, 코드가 센다. 많은 순)
   foundations?: { no: number; name: string; covers: string; count: number; problems: number; examples: string[] }[];
+  // 다시 볼 이전 학년 기초: 틀린 단계(Analysis.errorLessonId)가 학생 학년보다 낮은 학년 소단원인 풀이를 소단원별로 센 것 (많은 순).
+  // grade null 은 예전 채점이라 중학 기초 테마로 대신 묶은 것. 새 요약은 foundations 대신 이것을 쓴다
+  gaps?: { key: string; grade: number | null; label: string; covers: string; count: number; problems: number; examples: string[] }[];
 };
