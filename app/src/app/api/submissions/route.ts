@@ -5,6 +5,7 @@ import { canEditSubmission, canSeeSubmission, studentCurrentClassIds } from "@/l
 import { requireStudentAccess } from "@/lib/guard";
 import { getStudent } from "@/lib/roster";
 import { checkAnswer } from "@/lib/answerCheck";
+import { deleteDraft } from "@/lib/drafts";
 import { listSubmissions, saveSubmission } from "@/lib/store";
 import { runPipeline } from "@/lib/pipeline";
 import { getSession } from "@/lib/session";
@@ -84,6 +85,7 @@ export async function POST(req: Request) {
     ? { strokes: body.scratch.strokes, png: Buffer.from(body.scratch.imageDataUrl.replace(/^data:image\/png;base64,/, ""), "base64") }
     : undefined;
   await saveSubmission(submission, png, scratch);
+  await deleteDraft(session.id, body.problemId); // 냈으니 풀던 중 기록은 지운다
 
   // 응답은 바로 돌려주고 분석은 뒤에서 진행 (교사 화면에서 '분석 중' 표시).
   // after: 서버리스(Vercel)에서도 응답을 보낸 뒤 분석이 끝날 때까지 함수가 멈추지 않게

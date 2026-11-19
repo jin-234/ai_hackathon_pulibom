@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 // 학생 과제 목록 탭 (아이패드 앱 하단 탭 바와 연결)
 // 세 탭 내용을 미리 다 받아 두고 화면에서만 바꿔서, 서버를 다시 부르지 않고 바로 부드럽게 넘어간다.
@@ -22,6 +22,25 @@ export default function StudentTabs({ initial, panels }: { initial: StudentTab; 
   // 높이는 지금 탭에 맞춘다 (긴 탭 때문에 짧은 탭 아래가 비지 않게)
   const panelRefs = useRef<Partial<Record<StudentTab, HTMLDivElement | null>>>({});
   const [height, setHeight] = useState<number | null>(null);
+  // 옆 여백: 넘기는 판을 화면 끝까지 넓혀서(내용 자리는 그대로) 카드 그림자·유리 배경이 중간에서 잘려 보이지 않게
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [gutter, setGutter] = useState({ l: 0, r: 0 });
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      setGutter({ l: Math.round(r.left), r: Math.round(document.documentElement.clientWidth - r.right) });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
 
   const go = (next: StudentTab) => {
     setAnim(true);
@@ -112,8 +131,9 @@ export default function StudentTabs({ initial, panels }: { initial: StudentTab; 
   }, []);
 
   return (
-    // 옆 탭은 잘라 두고, 높이는 지금 탭만큼
-    <div style={{ overflow: "clip", height: height ?? undefined }}>
+    <div ref={rootRef}>
+    {/* 화면 끝에서 끝까지: 옆 탭은 화면 밖에서만 잘리고, 위아래(그림자)는 자르지 않는다. 높이는 지금 탭만큼 */}
+    <div style={{ overflowX: "clip", height: height ?? undefined, marginLeft: -gutter.l, marginRight: -gutter.r }}>
       <div
         onClickCapture={(e) => {
           if (swipedRef.current) {
@@ -133,11 +153,13 @@ export default function StudentTabs({ initial, panels }: { initial: StudentTab; 
             }}
             aria-hidden={t !== active}
             className="w-full shrink-0"
+            style={{ paddingLeft: gutter.l, paddingRight: gutter.r }}
           >
             {panels[t]}
           </div>
         ))}
       </div>
+    </div>
     </div>
   );
 }
