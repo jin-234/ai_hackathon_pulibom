@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import { canEditSubmission, canSeeSubmission } from "@/lib/classes";
 import { requireStudentAccess } from "@/lib/guard";
 import { getSubmission, updateSubmission } from "@/lib/store";
-import type { ErrorType } from "@/lib/types";
+import { asErrorType } from "@/lib/types";
 
 export const runtime = "nodejs";
+
+const MAX_MEMO = 2000;
 
 // 풀이 하나 (교사 화면)
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -26,12 +28,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const g = await requireStudentAccess(s.studentId, { current: false });
   if ("error" in g) return g.error;
   if (!canEditSubmission(g.access, s)) return NextResponse.json({ error: "지난 학년 기록은 고칠 수 없어요." }, { status: 403 });
-  const body = (await req.json()) as { errorType?: ErrorType; memo?: string };
+  const body = (await req.json().catch(() => ({}))) as { errorType?: unknown; memo?: unknown };
+  const errorType = body.errorType === undefined ? undefined : asErrorType(body.errorType);
+  if (body.errorType !== undefined && !errorType) return NextResponse.json({ error: "오류 유형을 확인해 주세요." }, { status: 400 });
+  if (body.memo !== undefined && typeof body.memo !== "string") return NextResponse.json({ error: "메모를 확인해 주세요." }, { status: 400 });
+  const memo = typeof body.memo === "string" ? body.memo.slice(0, MAX_MEMO) : undefined;
   const next = await updateSubmission(id, {
     teacher: {
       ...s.teacher,
-      ...(body.errorType !== undefined ? { errorType: body.errorType } : {}),
-      ...(body.memo !== undefined ? { memo: body.memo } : {}),
+      ...(errorType ? { errorType } : {}),
+      ...(memo !== undefined ? { memo } : {}),
       confirmedAt: Date.now(),
       by: g.session.id,
     },

@@ -19,8 +19,9 @@ import type { InkEvent, Point, Stroke } from "@/lib/types";
 export type InkCanvasHandle = {
   getData: () => { strokes: Stroke[]; events: InkEvent[]; imageDataUrl: string };
   getStrokes: () => Stroke[];
-  // 다른 문항으로 넘어갈 때: 그 문항에서 쓰던(또는 제출했던) 획으로 바꾼다. 없으면 빈 칸
-  reset: (strokes?: Stroke[]) => void;
+  getEvents: () => InkEvent[];
+  // 다른 문항으로 넘어갈 때: 그 문항에서 쓰던(또는 제출했던) 획과 그때까지의 기록으로 바꾼다. 없으면 빈 칸
+  reset: (strokes?: Stroke[], events?: InkEvent[]) => void;
   undo: () => void;
   clear: () => void;
 };
@@ -501,8 +502,9 @@ const InkCanvas = forwardRef<
       return { strokes, events: eventsRef.current, imageDataUrl: off.toDataURL("image/png") };
     },
     getStrokes: () => strokes,
-    reset: (next = []) => {
-      eventsRef.current = [];
+    getEvents: () => [...eventsRef.current],
+    reset: (next = [], events = []) => {
+      eventsRef.current = [...events];
       scrollRef.current?.scrollTo({ top: 0, left: 0 });
       setZoom(1);
       setSharpZoom(1);
