@@ -47,14 +47,11 @@ export function asLessonId(v: unknown, grade?: number | null): string | null {
   return lessonsUpTo(grade).find((l) => l.name === last)?.id ?? null;
 }
 
-// 개념이 어느 학교 과정인지 (학생 상세 '개념별 이해도'를 초등·중학·고등으로 나눠 보여 줄 때)
-//  1) 초등 개념 (concepts 표의 초4~초6 기초 개념 이름) → 초등
-//  2) 교육과정 소단원·단원 이름과 맞으면 그 학년 (중3·고1 '이차방정식'처럼 양쪽에 다 있으면 반 학년으로)
-//  3) 못 찾으면 과정이 분명한 말(항등식 → 고등, 이항 → 중등), 그래도 없으면 반 학년 (중1~중3 → 중등, 고1~ → 고등)
-export type SchoolStage = "초등" | "중등" | "고등";
-export const SCHOOL_STAGES: SchoolStage[] = ["초등", "중등", "고등"];
-const ELEMENTARY =
-  /□|자연수의\s*혼합|약수와\s*배수|분수의\s*(덧셈|뺄셈|곱셈|나눗셈)|소수의\s*(곱셈|나눗셈)|비와\s*비율|백분율|비례식|원의\s*둘레|직육면체|평균|규칙과\s*대응|다각형의\s*넓이/;
+// 개념이 어느 학교 과정인지 (학생 상세 '개념별 이해도'를 중등·고등으로 나눠 보여 줄 때)
+//  1) 교육과정 소단원·단원 이름과 맞으면 그 학년 (중3·고1 '이차방정식'처럼 양쪽에 다 있으면 반 학년으로)
+//  2) 못 찾으면 과정이 분명한 말(항등식 → 고등, 이항 → 중등), 그래도 없으면 반 학년 (중1~중3 → 중등, 고1~ → 고등)
+export type SchoolStage = "중등" | "고등";
+export const SCHOOL_STAGES: SchoolStage[] = ["중등", "고등"];
 // 교육과정 소단원 이름과 딱 맞지 않아도 학교 과정이 분명한 말 (AI 가 개념 이름을 조금씩 다르게 쓴다)
 const HIGH = /항등식|미정계수|나머지정리|인수정리|복소수|다항식의\s*연산/;
 const MIDDLE = /이항|동류항|분배법칙|정수|유리수|등식의\s*성질|일차방정식|일차식/;
@@ -64,7 +61,6 @@ const NAMES = [...new Set(ALL_LESSONS.flatMap((l) => [l.name, l.unit]))].sort((a
 export function schoolStageOf(concept: string, grade?: number | null): SchoolStage {
   const fallback = grade ? stageOfGrade(grade) : "중등";
   const c = concept.replace(/\s/g, "");
-  if (ELEMENTARY.test(concept)) return "초등";
   const hit = NAMES.find((n) => n.length >= 2 && c.includes(n.replace(/\s/g, "")));
   if (!hit) return HIGH.test(concept) ? "고등" : MIDDLE.test(concept) ? "중등" : fallback;
   const stages = new Set(ALL_LESSONS.filter((l) => l.name === hit || l.unit === hit).map((l) => stageOfGrade(l.grade)));

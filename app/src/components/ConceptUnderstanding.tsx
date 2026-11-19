@@ -15,7 +15,7 @@ const level = (acc: number) =>
       : { label: "보완 필요", bar: "bg-salmon", text: "text-[#b5624f]" };
 
 // 개념별 이해도: 문항마다 마지막 풀이 기준 정답률 (다시 풀었으면 다시 푼 결과). 낮은 개념부터
-//  개념이 많아서 초등·중등·고등 버튼으로 나눠 한 과정씩 보여 준다. 처음엔 개념이 가장 많은 과정
+//  개념이 많아서 중등·고등 버튼으로 나눠 한 과정씩 보여 준다. 처음엔 개념이 가장 많은 과정
 export default function ConceptUnderstanding({ concepts }: { concepts: StudentStats["conceptHistory"] }) {
   const [picked, setPicked] = useState<SchoolStage | null>(null);
   if (!concepts.length) return null; // 채점된 풀이가 없으면 그래프도 없음
