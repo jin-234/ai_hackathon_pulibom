@@ -1,0 +1,75 @@
+import { notFound, redirect } from "next/navigation";
+import StudentApp, { type MyResult } from "@/components/StudentApp";
+import { getAssignment, studentCanSee } from "@/lib/assignments";
+import { studentCurrentClassIds } from "@/lib/classes";
+import { getSession } from "@/lib/session";
+import { latestStrokes, listSubmissions } from "@/lib/store";
+import { statusOf } from "@/lib/types";
+
+export const dynamic = "force-dynamic";
+
+// 과제 이름을 문서 제목으로 (아이패드 앱 상단 바가 이걸 읽어 가운데에 보여 준다)
+export async function generateMetadata({ params }: { params: Promise<{ assignmentId: string }> }) {
+  const a = await getAssignment((await params).assignmentId);
+  return { title: a?.title ?? "풀이봄" };
+}
+
+export default async function SolvePage({ params }: { params: Promise<{ assignmentId: string }> }) {
+  const session = await getSession();
+  if (session?.role !== "student") redirect("/login?role=student");
+  const { assignmentId } = await params;
+  const assignment = await getAssignment(assignmentId);
+  // 지금 속한 반의 과제만 (보관된 지난 반 과제는 열리지 않음)
+  if (!assignment || !studentCanSee(assignment, session.id, await studentCurrentClassIds(session.id))) notFound();
+  const st = statusOf(assignment);
+  if (st === "draft") redirect("/student");
+  const subs = await listSubmissions({ studentId: session.id });
+  const mine = subs
+    .filter((s) => s.studentId === session.id && assignment.problems.some((p) => p.id === s.problemId))
+    .sort((a, b) => a.submittedAt - b.submittedAt);
+  const done = Object.fromEntries(mine.map((s) => [s.problemId, true]));
+  // 마감된 과제만: 문항별 마지막 제출의 AI 채점(틀린 줄·이유)·선생님 확인·메모, 정답·해설 (교사용 지도 방향(suggestion)은 빼고)
+  const results: Record<string, MyResult> = {};
+  if (st === "closed")
+    for (const s of mine) {
+      const p = assignment.problems.find((q) => q.id === s.problemId)!;
+      results[s.problemId] = {
+        submissionId: s.id,
+        submittedAt: s.submittedAt,
+        tries: mine.filter((x) => x.problemId === s.problemId).length,
+        status: s.status,
+        ai: s.analysis
+          ? {
+              correct: s.analysis.correct,
+              answer: s.analysis.recognizedAnswer,
+              errorType: s.analysis.errorType,
+              reason: s.analysis.reason,
+              // 내 풀이를 AI가 읽은 줄 (보정한 줄 우선)과 처음 틀린 줄
+              lines: s.analysis.correctedLines?.length ? s.analysis.correctedLines : s.ocrLines,
+              firstErrorLine: s.analysis.firstErrorLine,
+            }
+          : null,
+        teacher: s.teacher?.confirmedAt
+          ? { errorType: s.teacher.errorType ?? null, confirmedAt: s.teacher.confirmedAt, memo: s.teacher.memo?.trim() || null }
+          : null,
+        answer: p.answer || null,
+        solution: p.solution ?? [],
+      };
+    }
+  // 아직 열린 과제: 이미 낸 문항은 마지막 풀이를 캔버스에 그대로 띄워서 그 위에서 고친다
+  const strokes = st === "closed" ? {} : await latestStrokes(session.id, assignment.problems.map((p) => p.id));
+  return (
+    <StudentApp
+      key={assignment.id}
+      studentId={session.id}
+      studentName={session.name}
+      assignmentTitle={assignment.title}
+      problems={assignment.problems}
+      initialDone={done}
+      initialStrokes={strokes}
+      closed={st === "closed"}
+      results={st === "closed" ? results : undefined}
+      dueAt={st === "closed" ? undefined : assignment.dueAt}
+    />
+  );
+}

@@ -1,0 +1,307 @@
+@import "tailwindcss";
+
+/* 기본 글꼴: 나눔스퀘어라운드 (둥글고 귀여운 느낌). 굵기마다 파일이 따로라 직접 묶는다 */
+@font-face {
+  font-family: "NanumSquareRound";
+  font-weight: 300;
+  font-display: swap;
+  src: url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundL.woff2) format("woff2");
+}
+@font-face {
+  font-family: "NanumSquareRound";
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundR.woff2) format("woff2");
+}
+@font-face {
+  font-family: "NanumSquareRound";
+  font-weight: 500 700;
+  font-display: swap;
+  src: url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundB.woff2) format("woff2");
+}
+@font-face {
+  font-family: "NanumSquareRound";
+  font-weight: 800 900;
+  font-display: swap;
+  src: url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundEB.woff2) format("woff2");
+}
+
+/* 풀이봄 디자인 토큰: 따뜻한 크림 + 병아리 노랑 + 세이지 그린 */
+@theme {
+  --color-cream: #faf6ec;
+  --color-paper: #fffdf8;
+  --color-sand: #f3ecdc;
+  --color-line: #ebe3d1;
+  --color-ink: #2d2b26;
+  --color-muted: #6e685b; /* 설명 글씨: 크림·유리 배경에서도 대비 4.5:1 이상 */
+  --color-olive: #847a4c;
+  --color-honey: #f5d66f;
+  --color-honey-soft: #fbedbd;
+  --color-honey-deep: #e2b53c;
+  --color-sage: #5d7a50; /* 초록 버튼: 흰 글씨 대비 4.8:1 */
+  --color-sage-light: #87a07a; /* 막대·점 같은 장식용 연한 초록 */
+  --color-sage-soft: #e6ecdf;
+  --color-salmon: #e8a090;
+  --color-salmon-soft: #f8e1da;
+
+  --font-sans: "NanumSquareRound", "Pretendard Variable", "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+  --font-math: "Cambria Math", "Latin Modern Math", "Times New Roman", serif;
+  --font-hand: "Nanum Pen Script", "Gaegu", cursive;
+
+  /* 모서리: 둥글둥글하게, Tailwind 기본보다 두 단계쯤 더 (rounded-* 전체에 적용) */
+  --radius: 0.625rem;
+  --radius-sm: 0.625rem;
+  --radius-md: 0.875rem;
+  --radius-lg: 1.125rem;
+  --radius-xl: 1.375rem;
+  --radius-2xl: 1.75rem;
+  --radius-3xl: 2.5rem;
+}
+
+body {
+  background: var(--color-cream);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  letter-spacing: -0.02em;
+}
+
+/* 필기 영역의 점 격자 */
+.dot-grid {
+  background-color: #fffdf8; /* 필기 영역은 유리 효과 없이 불투명하게 (글씨가 잘 보이게) */
+  background-image: radial-gradient(circle, #e2d9c4 1px, transparent 1.2px);
+  background-size: 22px 22px;
+}
+
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-weight: 600;
+}
+
+.input {
+  width: 100%;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-line);
+  background: var(--color-paper);
+  padding: 0.65rem 1.1rem; /* 모서리가 둥근 만큼 글자를 안쪽으로 */
+  font-size: 1rem;
+  outline: none;
+}
+.input:focus {
+  border-color: var(--color-honey-deep);
+}
+
+/* ── 리퀴드 글래스 ─────────────────────────────────────
+   반투명 유리판: 뒤를 흐리게 비추고(backdrop blur), 가장자리에 밝은 빛 테두리와 윗면 하이라이트.
+   유리가 비쳐 보이도록 배경에 은은한 빛 번짐을 깔고, 바탕색 토큰을 반투명으로 바꾼다.
+   화면 파일을 하나하나 고치지 않고, 둥근 카드·버튼·입력칸에 한꺼번에 입힌다.
+   (선택 표시 ring, 점선 빈 상태 상자는 그대로 둔다) */
+:root {
+  --color-paper: rgba(255, 253, 248, 0.5);
+  --color-cream: rgba(250, 246, 236, 0.45);
+  --color-sand: rgba(243, 236, 220, 0.55);
+  --color-honey-soft: rgba(251, 237, 189, 0.6);
+  --color-sage-soft: rgba(230, 236, 223, 0.6);
+  --color-salmon-soft: rgba(248, 225, 218, 0.65);
+
+  --glass-blur: blur(22px) saturate(1.7);
+  --glass-edge: rgba(255, 255, 255, 0.7);
+  --glass-shine: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(255, 255, 255, 0.25);
+  --glass-card: var(--glass-shine), 0 10px 36px rgba(120, 100, 50, 0.12);
+  --glass-button: var(--glass-shine), 0 4px 14px rgba(120, 100, 50, 0.12);
+}
+
+body {
+  background:
+    radial-gradient(60vw 50vh at 8% 0%, rgba(245, 214, 111, 0.45), transparent 70%),
+    radial-gradient(50vw 50vh at 100% 20%, rgba(135, 160, 122, 0.3), transparent 70%),
+    radial-gradient(60vw 60vh at 70% 100%, rgba(232, 160, 144, 0.28), transparent 70%),
+    #faf6ec;
+  background-attachment: fixed;
+}
+
+/* 카드·패널 */
+:is(div, section, a, button, details, form)[class*="rounded-3xl"]:not([class*="border-dashed"]):not([class*="ring-"]),
+:is(div, section, a, button)[class*="rounded-2xl"]:not([class*="border-dashed"]):not([class*="ring-"]) {
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-card);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+
+/* 색이 칠해졌거나 테두리가 있는 둥근 버튼: 작은 유리 알약, 누르면 살짝 눌린다
+   (hover:bg-* 만 있는 아이콘 버튼·달력 날짜는 그대로 둔다) */
+:is(button, a, summary)[class*="rounded-full"]:is([class^="bg-"], [class*=" bg-"]):not(:disabled),
+:is(button, summary)[class*="rounded-full"][class~="border"]:not(:disabled) {
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-button);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+
+/* 누르는 느낌: 모든 버튼·링크가 손가락을 대면 바로 살짝 들어가고, 떼면 탄력 있게 돌아온다
+   - 태블릿 회색 탭 깜빡임 없애기, 두 번 탭 확대 대기 없애기 (touch-action) */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+:is(button, a, summary, [role="button"]) {
+  touch-action: manipulation;
+  transition:
+    transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.2s ease,
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
+}
+:is(button, a, summary, [role="button"]):not(:disabled):active {
+  transform: scale(0.96);
+  transition-duration: 0.08s;
+}
+/* 큰 카드형 링크는 덜 들어가게 */
+a:is([class*="rounded-3xl"], [class*="rounded-2xl"]):active {
+  transform: scale(0.985);
+}
+/* 테두리만 있던 버튼도 유리판을 깐다 */
+:is(button, summary)[class*="rounded-full"][class~="border"]:not([class^="bg-"], [class*=" bg-"]) {
+  background-color: var(--color-paper);
+}
+
+/* 입력칸: 살짝 더 맑은 유리 */
+.input,
+:is(input, select)[class*="rounded-full"] {
+  border: 1px solid var(--glass-edge);
+  background-color: rgba(255, 255, 255, 0.4);
+  box-shadow: inset 0 1px 3px rgba(120, 100, 50, 0.08);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+.input:focus,
+:is(input, select)[class*="rounded-full"]:focus {
+  border-color: var(--color-honey-deep);
+  box-shadow: 0 0 0 3px rgba(245, 214, 111, 0.35);
+}
+
+/* 병아리 '찹찹찹': 종종걸음으로 세 번 콩콩 뛰고 잠깐 쉰다. 착지할 때 살짝 납작해지고 좌우로 뒤뚱인다 */
+.chick-hop {
+  transform-origin: 50% 100%;
+  animation: chick-hop 2.4s ease-in-out infinite;
+}
+@keyframes chick-hop {
+  0%, 48%, 100% { transform: translateY(0) rotate(0) scale(1, 1); }
+  4%  { transform: translateY(0) rotate(0) scale(1.08, 0.9); }
+  10% { transform: translateY(-9px) rotate(-6deg) scale(0.96, 1.05); }
+  16% { transform: translateY(0) rotate(0) scale(1.08, 0.9); }
+  22% { transform: translateY(-9px) rotate(6deg) scale(0.96, 1.05); }
+  28% { transform: translateY(0) rotate(0) scale(1.08, 0.9); }
+  34% { transform: translateY(-9px) rotate(-6deg) scale(0.96, 1.05); }
+  40% { transform: translateY(0) rotate(0) scale(1.08, 0.9); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chick-hop { animation: none; }
+}
+
+/* 표·상세 패널처럼 글자가 많은 판: 유리 효과를 끄고 불투명하게 (뒤 색 번짐이 글자 밑에 비치지 않게) */
+.solid,
+.solid:is(div, section)[class*="rounded-3xl"],
+.solid:is(div, section)[class*="rounded-2xl"] {
+  background-color: #fffdf8 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 시간 휠 피커 (DateTimePicker): 스크롤바 숨기고 위아래를 흐리게 */
+.wheel {
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+  mask-image: linear-gradient(to bottom, transparent, #000 30%, #000 70%, transparent);
+}
+.wheel::-webkit-scrollbar {
+  display: none;
+}
+
+/* 학생 과제 목록 탭 넘김: 고른 쪽에서 살짝 밀려 들어오며 나타난다 (StudentTabs) */
+@keyframes tab-in-right {
+  from { opacity: 0; transform: translateX(28px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes tab-in-left {
+  from { opacity: 0; transform: translateX(-28px); }
+  to { opacity: 1; transform: none; }
+}
+.tab-in-right { animation: tab-in-right 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.tab-in-left { animation: tab-in-left 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .tab-in-right, .tab-in-left { animation: none; }
+}
+
+/* 아이패드 앱에서만 보이는 것 (앱이 .app-only 를 보이게 바꾼다, ios StudentWebView) */
+.app-only { display: none; }
+
+/* 병아리 움직임 (Chick motion) */
+.chick-bob { animation: chick-bob 3.2s ease-in-out infinite; transform-origin: 50% 95%; }
+.chick-cheer { animation: chick-hop 0.62s cubic-bezier(0.3, 0, 0.4, 1) infinite; transform-origin: 50% 95%; }
+.chick-eyes { transform-box: fill-box; transform-origin: center; animation: chick-blink 3.8s infinite; }
+.chick-cheer .chick-wing-l, .chick-cheer .chick-wing-r { transform-box: fill-box; animation: chick-flap 0.31s ease-in-out infinite alternate; }
+.chick-cheer .chick-wing-l { transform-origin: right center; }
+.chick-cheer .chick-wing-r { transform-origin: left center; animation-name: chick-flap-r; }
+@keyframes chick-bob {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  25% { transform: translateY(-9%) rotate(-5deg); }
+  50% { transform: translateY(0) rotate(0); }
+  75% { transform: translateY(-9%) rotate(5deg); }
+}
+@keyframes chick-hop {
+  0% { transform: translateY(0) scale(1.08, 0.9); }
+  35% { transform: translateY(-22%) scale(0.95, 1.06); }
+  65% { transform: translateY(-22%) scale(1, 1); }
+  100% { transform: translateY(0) scale(1.08, 0.9); }
+}
+@keyframes chick-flap { from { transform: rotate(0); } to { transform: rotate(-35deg); } }
+@keyframes chick-flap-r { from { transform: rotate(0); } to { transform: rotate(35deg); } }
+@keyframes chick-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.1); }
+}
+
+/* 다 끝냈을 때 축하 화면: 색종이·카드 등장 */
+.celebrate-in { animation: celebrate-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@keyframes celebrate-in {
+  from { opacity: 0; transform: scale(0.85) translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+.confetti { position: absolute; top: -4%; width: 10px; height: 14px; border-radius: 2px; animation: confetti-fall linear forwards; }
+@keyframes confetti-fall {
+  to { transform: translateY(110vh) rotate(720deg); opacity: 0.6; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chick-bob, .chick-cheer, .chick-eyes, .chick-cheer .chick-wing-l, .chick-cheer .chick-wing-r, .confetti { animation: none; }
+}
+
+/* 등장 움직임: 카드는 하나씩 차례로 올라오고, 문항을 옮기면 문제 칸이 밀려 들어오고, 낸 문항 ✓ 는 톡 튄다 */
+.stagger > * { animation: rise-in 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; } /* backwards: 끝나면 손을 떼서 누름 효과(:active)가 그대로 동작 */
+.stagger > :nth-child(2) { animation-delay: 0.05s; }
+.stagger > :nth-child(3) { animation-delay: 0.1s; }
+.stagger > :nth-child(4) { animation-delay: 0.15s; }
+.stagger > :nth-child(5) { animation-delay: 0.2s; }
+.stagger > :nth-child(6) { animation-delay: 0.25s; }
+.stagger > :nth-child(n + 7) { animation-delay: 0.3s; }
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.problem-in { animation: problem-in 0.36s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes problem-in {
+  from { opacity: 0; transform: translateX(-18px); }
+  to { opacity: 1; transform: none; }
+}
+.pop-in { animation: pop-in 0.45s cubic-bezier(0.34, 1.8, 0.64, 1) both; }
+@keyframes pop-in {
+  from { transform: scale(0); }
+  to { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stagger > *, .problem-in, .pop-in { animation: none; }
+}
