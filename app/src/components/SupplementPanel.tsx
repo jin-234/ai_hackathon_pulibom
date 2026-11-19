@@ -1,5 +1,6 @@
 "use client";
 
+import { useLiveRefresh } from "@/components/useLiveRefresh";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FigureEditor } from "@/components/FigureEditor";
 import { solveLinear } from "@/lib/equation";
@@ -90,9 +91,9 @@ export default function SupplementPanel({ studentId, openSignal }: { studentId: 
   );
   useEffect(() => {
     load();
-    const t = setInterval(load, 5000); // 학생이 보충 문항을 풀면 바로 반영
-    return () => clearInterval(t);
   }, [load]);
+  // 학생이 보충 문항을 풀면 바로 반영 (실시간 신호. 설정이 없으면 5초 폴링)
+  useLiveRefresh(`student:${studentId}`, load, { fastMs: 5000 });
 
   const makeDraft = useCallback(async (n?: number) => {
     setBusy("draft");

@@ -7,6 +7,7 @@ import GroupSupplement, { groupStudents } from "@/components/GroupSupplement";
 import JoinCode from "@/components/JoinCode";
 import ReviewQueue from "@/components/ReviewQueue";
 import StudentDetail, { type DetailTab, type SubFilter } from "@/components/StudentDetail";
+import { useLiveRefresh } from "@/components/useLiveRefresh";
 import { useTeacherClass, type TeacherClass } from "@/components/useTeacherClass";
 import { ERROR_LABEL, type ClassStats, type StudentStats } from "@/lib/types";
 
@@ -159,6 +160,7 @@ function Dashboard() {
   // 실제 제출 지표: 분석이 끝나면 바로 반영되도록 주기적으로 갱신
   const [real, setReal] = useState<ClassStats | null>(null);
   const [loadError, setLoadError] = useState("");
+  const loadRef = useRef<() => void>(() => {});
   useEffect(() => {
     if (!classId || customInvalid) return;
     const q = new URLSearchParams({
@@ -180,12 +182,14 @@ function Dashboard() {
         })
         .catch(() => {});
     load();
-    const t = setInterval(load, 4000);
+    loadRef.current = load;
     return () => {
       stale = true;
-      clearInterval(t);
+      loadRef.current = () => {};
     };
   }, [classId, assignment, range, customInvalid]);
+  // 이 반 학생의 풀이가 바뀌면 바로 다시 불러온다 (실시간 신호. 설정이 없으면 4초 폴링)
+  useLiveRefresh(classId ? `class:${classId}` : null, () => loadRef.current(), { enabled: !customInvalid });
 
   // 반을 바꾸면 거르기·열린 학생을 처음으로
   const changeClass = (id: string) => {

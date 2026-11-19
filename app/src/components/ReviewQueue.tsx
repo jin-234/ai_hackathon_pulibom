@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { SubmissionCard } from "@/components/StudentDetail";
+import { useLiveRefresh } from "@/components/useLiveRefresh";
 import type { Submission } from "@/lib/types";
 
 type Item = Submission & { studentName: string };
@@ -11,6 +12,7 @@ const REASON: Partial<Record<Submission["status"], { label: string; cls: string 
   error: { label: "AI 분석 실패", cls: "bg-sand text-ink" },
 };
 
+const isDone = (s: Submission) => Boolean(s.teacher?.confirmedAt);
 const when = (ms: number) => new Date(ms).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 // 오늘의 교실 '확인할 풀이' 탭: 반 전체에서 교사가 확인할 풀이 (AI가 판독하기 어려웠거나 분석에 실패한 풀이)
@@ -57,7 +59,37 @@ export default function ReviewQueue({
     };
   }, [classId, query]);
 
-  const isDone = (s: Item) => Boolean(s.teacher?.confirmedAt);
+  // 실시간 신호(새 제출·다시 분석 결과)가 오면 목록을 다시 받아 합친다.
+  //  서버 목록은 '아직 확인 안 한 풀이'만이라, 여기서 방금 확인한 풀이(확인한 것 n개 보기)는 남겨 둔다.
+  //  보고 있던 풀이가 목록에서 빠지면 (다른 화면에서 확인함·학생이 다시 냄) 다음 풀이로
+  const refresh = useCallback(() => {
+    fetch(`/api/classes/${classId}/review${query ? `?${query}` : ""}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error || !Array.isArray(d.submissions)) return;
+        const fresh = d.submissions as Item[];
+        setItems((prev) => {
+          if (!prev) return prev;
+          const byId = new Map(fresh.map((s) => [s.id, s]));
+          const kept = prev
+            .filter((s) => byId.has(s.id) || isDone(s))
+            .map((s) => (byId.has(s.id) && !isDone(s) ? { ...byId.get(s.id)!, studentName: s.studentName } : s));
+          const added = fresh.filter((s) => !prev.some((p) => p.id === s.id));
+          return [...kept, ...added].sort((a, b) => a.submittedAt - b.submittedAt);
+        });
+      })
+      .catch(() => {});
+  }, [classId, query]);
+  // 폴링은 없던 화면이라 연결이 안 될 때도 느리게(30초)만
+  useLiveRefresh(`class:${classId}`, refresh, { fastMs: 30000 });
+  useEffect(() => {
+    if (items && current && !items.some((s) => s.id === current)) setCurrent(items.find((s) => !isDone(s))?.id ?? null);
+    else if (items && !current) {
+      const first = items.find((s) => !isDone(s)); // 다 확인한 뒤 새 풀이가 들어옴
+      if (first) setCurrent(first.id);
+    }
+  }, [items, current]);
+
   const left = items?.filter((s) => !isDone(s)) ?? [];
   const shown = items?.filter((s) => showDone || !isDone(s) || s.id === current) ?? [];
   const sel = items?.find((s) => s.id === current) ?? null;
