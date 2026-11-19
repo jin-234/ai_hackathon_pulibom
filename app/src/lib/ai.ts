@@ -257,14 +257,22 @@ function pendingCalc(line: string): string {
 
 const xCount = (line: string) => line.match(/x/g)?.length ?? 0;
 
-function checkLines(lines: string[], variable = "x"): string[] {
+// question: 방정식 문항의 문제 식. 풀리면 첫 줄을 문제 식과 비교한다 (문제를 옮겨 적다 숫자·부호를 바꾼 COPY 를 찾게)
+function checkLines(lines: string[], variable = "x", question?: string): string[] {
   // 풀이기는 x 만 읽으므로 다른 미지수는 x 로 바꿔서 풀고, 알려 주는 글은 다시 그 글자로 쓴다
   if (!variable) return lines.map(() => ""); // 문자가 없는 계산 문항은 방정식 검산을 하지 않는다
+  const toX = (l: string) => (l.includes("x") ? "?" : l.split(variable).join("x"));
   if (variable !== "x")
-    return checkLines(lines.map((l) => (l.includes("x") ? "?" : l.split(variable).join("x"))), "x").map((n) => n.replace(/x/g, variable));
+    return checkLines(lines.map(toX), "x", question && toX(question)).map((n) => n.replace(/x/g, variable));
   const fmt = (v: number) => (Number.isInteger(v) ? String(v) : String(Math.round(v * 1000) / 1000));
   let prev: { v: number; a: number; b: number; line: string } | null = null;
-  return lines.map((l) => {
+  try {
+    if (question) prev = { v: solveLinear(question).answerValue, ...linearForm(question), line: question };
+  } catch {
+    prev = null; // 문장제 등 풀 수 없는 문제는 첫 줄부터 비교
+  }
+  const fromQuestion = !!prev;
+  return lines.map((l, i) => {
     let cur: { v: number; a: number; b: number; line: string };
     try {
       if (l.includes("?")) return "";
@@ -273,7 +281,8 @@ function checkLines(lines: string[], variable = "x"): string[] {
       return "";
     }
     let note = `[검산: 해 x=${fmt(cur.v)}]`;
-    if (prev && Math.abs(cur.v - prev.v) < 1e-9) note = `[검산: 해 x=${fmt(cur.v)}, 앞 줄과 같음 → 이 줄로 넘어오는 과정은 맞음]`;
+    if (prev && Math.abs(cur.v - prev.v) < 1e-9)
+      note = `[검산: 해 x=${fmt(cur.v)}, ${i === 0 && fromQuestion ? "문제 식과 같음 → 문제를 맞게 옮겼음" : "앞 줄과 같음 → 이 줄로 넘어오는 과정은 맞음"}]`;
     else if (prev) {
       // 'Ax = B' 로 정리했을 때 어느 쪽이 바뀌었는지 (양변을 나눈 줄은 둘 다 바뀌므로 해만 알린다)
       const side =
@@ -282,7 +291,10 @@ function checkLines(lines: string[], variable = "x"): string[] {
           : cur.a === prev.a && cur.b !== prev.b
             ? ` (모두 정리하면 앞 줄 ${fmt(prev.a)}x = ${fmt(prev.b)}, 이 줄 ${fmt(cur.a)}x = ${fmt(cur.b)}: x 항은 그대로이고 상수항 쪽이 달라짐.${pendingCalc(prev.line)})`
             : "";
-      note = `[검산: 해가 x=${fmt(prev.v)} 에서 x=${fmt(cur.v)} 로 달라짐 → 이 줄로 넘어올 때 실수${side}]`;
+      note =
+        i === 0 && fromQuestion
+          ? `[검산: 해 x=${fmt(cur.v)}, 문제 식의 해 x=${fmt(prev.v)} 와 다름 → 첫 줄부터 문제와 달라짐. 문제 식을 그대로 옮겨 쓴 줄인데 숫자·부호가 바뀌었으면 COPY, 식을 변형하다 틀렸으면 그 변형의 유형${side.replace(/앞 줄/g, "문제 식")}]`
+          : `[검산: 해가 x=${fmt(prev.v)} 에서 x=${fmt(cur.v)} 로 달라짐 → 이 줄로 넘어올 때 실수${side}]`;
     }
     prev = cur;
     return note;
@@ -294,31 +306,38 @@ export const ERROR_GUIDE: Record<ErrorType, string> = {
   SIGN: "음수가 끼거나 답이 음수가 되는 덧셈·뺄셈·곱셈·나눗셈을 틀림: 부호를 틀리거나, 절댓값을 더할지 뺄지 헷갈림 (예: (-2) × (-3) = -6, -8 + 5 = -13, 1 - 7 = -8). 괄호 앞 - 를 풀다 틀린 것은 PAREN_SIGN, 음수를 대입하며 괄호를 빠뜨린 것은 SUBSTITUTE, x 의 계수로 나누는 단계의 부호는 DIVIDE",
   PAREN_SIGN: "괄호 앞에 - (음수)가 있을 때 괄호 안 뒤쪽 항의 부호를 바꾸지 않음 (예: -(x + 3) → -x + 3, 7 - (x - 2) → 7 - x - 2, -2(x + 3) → -2x + 6)",
   DISTRIBUTE: "괄호를 풀 때 괄호 앞 수를 일부 항에만 곱함 (예: 2(x + 3) → 2x + 3, 3(x - 2) → 3x - 2)",
-  LIKE_TERMS: "x 항끼리·상수항끼리 모을 때 틀림, x 항과 상수항을 합침 (예: 3x + 2 = 5x, 5x - x = 6x). 괄호를 풀다 틀린 것은 DISTRIBUTE 나 PAREN_SIGN",
-  TRANSPOSE: "등식의 성질·이항을 잘못 씀: 이항할 때 부호를 안 바꿈, 한쪽 변에만 연산함 (예: 2x + 3 = 11 → 2x = 11 + 3)",
-  DIVIDE: "x 의 계수로 양변을 나눌 때 틀림: 곱하거나 빼 버림, 음수 계수로 나눌 때 부호 (예: 3x = 12 → x = 9)",
+  LIKE_TERMS: "x 항끼리·상수항끼리 모을 때 틀림, x 항과 상수항을 합침, 문자·지수를 잘못 처리함 (예: 2x + 3 = 5x, 5x - 2x = 7x, x + x = x²). 괄호를 풀다 틀린 것은 DISTRIBUTE 나 PAREN_SIGN",
+  TRANSPOSE: "등식의 성질·이항을 잘못 씀: 이항할 때 부호를 안 바꿈, 한쪽 변에만 더하거나 뺌 (예: 2x + 3 = 11 → 2x = 11 + 3, x - 4 = 6 → x = 6)",
+  DIVIDE: "양변을 곱하거나 나눠 x 의 계수를 없앨 때 틀림: 곱하거나 빼 버림, 일부 항만 나눔, 음수 계수로 나눌 때 부호 (예: 3x = 12 → x = 9, 2x + 6 = 10 → x + 6 = 5)",
   SUBSTITUTE: "문자에 값(특히 음수)을 대입할 때 괄호를 쓰지 않아 틀림 (예: x = -2 를 x² 에 넣어 -2² = -4 로 계산, 5 - x 에 넣어 5 - 2 로 계산)",
-  EXPR_MEANING: "문장을 식으로 세우거나 문자식의 뜻을 잘못 이해함 (예: 'x 의 3배보다 2 작은 수' → 3(x - 2)). 식을 맞게 세웠으면 여기가 아니다",
+  EXPR_MEANING: "문장제에서 미지수를 잘못 정하거나 식을 잘못 세움, 문자식의 뜻을 잘못 이해함 (예: '어떤 수의 두 배에 3을 더한 값' → 2(x + 3)). 식을 맞게 세웠으면 여기가 아니다",
   CONDITION: "문제에 주어진 조건(양수, 자연수, 정수, 범위 등)을 답에 반영하지 않음 (예: 'x 는 양수'라는 조건이 있는데 음수도 답에 포함)",
   TARGET: "식과 계산은 맞는데 문제에서 묻는 값이 아닌 다른 값을 답함 (예: 사과 수를 x 로 두고 배의 개수 x + 3 을 구해야 하는데, x = 5 를 구한 뒤 5개라고 답함)",
-  FRACTION: "분수 계산·통분·약분·분모 없애기에서 틀림 (예: x/2 + x/3 에서 분모를 5 로 둠)",
-  ARITH: "양수끼리 계산해 양수가 나오는 단순 덧셈·뺄셈·곱셈·나눗셈 실수나 계산 순서 실수 (예: 2x = 11 - 3 다음 줄에 2x = 6, 7 × 8 = 54). 답이 음수가 되는 뺄셈(1 - 7 = -8)은 SIGN",
-  FORMULA: "넓이·부피·비율 등 공식이나 개념을 잘못 적용함",
+  FRACTION: "분수 계산·통분·약분·분모 없애기에서 틀림 (예: 1/2 + 1/3 = 2/5, x/2 + x/3 에서 분모를 5 로 둠)",
+  ARITH: "양수끼리 계산해 양수가 나오는 단순 덧셈·뺄셈·곱셈·나눗셈, 소수 자릿수, 계산 순서 실수 (예: 2x = 11 - 3 다음 줄에 2x = 6, 24 ÷ 6 = 5, 0.2 × 0.3 = 0.6, 2 + 3 × 4 에서 2 + 3 을 먼저 계산). 답이 음수가 되는 뺄셈(1 - 7 = -8)은 SIGN",
+  FORMULA: "넓이·부피·비율 등 공식을 잘못 기억하거나 적용함 (예: 삼각형 넓이에서 ÷ 2 를 빠뜨림, 원의 넓이에 반지름 대신 지름을 넣음)",
+  COPY: "계산·식 변형이 아니라 옮겨 적다가 바뀜: 문제를 풀이 첫 줄로 옮겨 적으며 숫자·부호를 바꿈, 풀이에서 구한 값과 다른 값을 최종 답으로 씀 (예: 문제 2x + 3 = 11 을 2x + 5 = 11 로 옮겨 적음, x = 4 를 구하고 답에 x = 7 이라고 씀)",
   UNREADABLE: "풀이를 거의 읽을 수 없어 판단 불가",
   NONE: "정답이고 과정에도 문제 없음",
 };
 
-// 중1 교사 설문에서 '풀이에서 잡아 주면 좋겠다'고 많이 꼽은 실수 유형 (picked: 고른 교사 수, 많이 고른 순).
+// 수학 풀이 지도 경험 설문(2026-11-19, 응답 26명 중 실수 유형을 답한 24명)에서 '실제로 본 실수'로 많이 꼽힌 유형
+// (picked: 그 유형에 해당하는 보기를 하나라도 고른 사람 수, 많이 고른 순. 24명 중 11명 이상만 넣음).
+// 같은 코드에 묶인 보기: ARITH = 덧셈·뺄셈 / 곱셈·나눗셈 / 소수 / 계산 순서, TRANSPOSE = 이항 / 한쪽 변에만 연산,
+// COPY = 문제를 옮겨 적다 바꿈 / 구한 값과 다른 답을 씀.
+// 설문에서 많이 나왔지만 수학 실수가 아닌 것(필기가 불명확 13명, 중간 단계 생략 12명)은 summary.ts 가 코드로 cautions 에 넣는다.
 // 채점(오류 유형 분류)과 학생별 약점 요약이 같은 코드·이름을 쓴다. 기준·예시는 ERROR_GUIDE 에
+export const SURVEY_RESPONDENTS = 24;
 export const TEACHER_PICKS: { type: ErrorType; name: string; picked: number }[] = [
-  { type: "CONDITION", name: "조건을 놓침", picked: 10 },
-  { type: "TARGET", name: "구하는 값을 혼동함", picked: 10 },
-  { type: "SIGN", name: "음수 계산에서 부호를 틀림", picked: 9 },
-  { type: "DISTRIBUTE", name: "괄호를 풀 때 일부 항에만 곱함", picked: 8 },
-  { type: "PAREN_SIGN", name: "괄호 앞 음수의 부호를 틀림", picked: 8 },
-  { type: "SUBSTITUTE", name: "값을 대입할 때 괄호를 빠뜨림", picked: 8 },
-  { type: "TRANSPOSE", name: "이항할 때 부호를 틀림", picked: 7 },
-  { type: "ARITH", name: "덧셈·뺄셈 계산에서 틀림", picked: 6 },
+  { type: "CONDITION", name: "조건을 놓침", picked: 14 },
+  { type: "TARGET", name: "구하는 값을 혼동함", picked: 14 },
+  { type: "SIGN", name: "음수 계산에서 부호를 틀림", picked: 13 },
+  { type: "COPY", name: "옮겨 적다가 숫자·답을 바꿈", picked: 13 },
+  { type: "ARITH", name: "덧셈·뺄셈·곱셈·나눗셈 계산에서 틀림", picked: 13 },
+  { type: "PAREN_SIGN", name: "괄호 앞 음수의 부호를 틀림", picked: 12 },
+  { type: "SUBSTITUTE", name: "값을 대입할 때 괄호를 빠뜨림", picked: 12 },
+  { type: "TRANSPOSE", name: "이항할 때 부호를 틀림", picked: 12 },
+  { type: "DISTRIBUTE", name: "괄호를 풀 때 일부 항에만 곱함", picked: 11 },
 ];
 const PICK_TYPES = new Set(TEACHER_PICKS.map((p) => p.type));
 
@@ -361,11 +380,9 @@ export async function analyzeSolution(input: {
   recognizedAnswer 에는 학생이 마지막 줄에 쓴 값을 하나도 빼거나 더하지 않고 그대로 옮긴다. 정답·해설을 보고 학생이 쓰지 않은 답을 대신 골라 주지 않는다.
   마지막 줄에 값이 여러 개 쓰여 있으면 학생은 그 값을 모두 답으로 낸 것이다. 정답에 없는 값이 섞여 있으면 오답이다 (정답이 3 인데 마지막 줄이 '3, -3', 정답이 1, 2 인데 마지막 줄이 '-1, 0, 1, 2': 조건에 맞는 값만 고르지 않았으므로 오답, CONDITION).
 4단계 오류 유형 분류: 첫 오류 줄에서 학생이 실제로 무엇을 잘못했는지 보고 아래 유형 중 가장 근본 원인 하나만 고른다.
-  ★ 표시는 중1 교사들이 풀이에서 꼭 잡아 달라고 꼽은 실수다. 풀이가 여기에 해당하는지 먼저 확인한다.
+  ★ 표시는 수학을 가르쳐 본 사람들이 설문에서 학생 풀이에서 자주 본다고 꼽은 실수다. 풀이가 여기에 해당하는지 먼저 확인한다.
 ${codes}
 5단계 근거 쓰기: reason 에 틀린 식을 인용하고 "무엇을 무엇으로 잘못 바꿨는지"를 구체적으로 쓴다 (예: "2x + 3 = 11 에서 3 을 이항할 때 부호를 바꾸지 않아 2x = 11 + 3 이 됐다").
-
-아래 풀이는 OCR 결과를 글자 모양 기준으로 보정한 것이다. 보정이 틀렸을 수 있으니 이상하면 needsReview=true.
 
 아래 풀이는 OCR 결과를 글자 모양 기준으로 보정한 것이다. 보정이 틀렸을 수 있으니 이상하면 needsReview=true.
 학생은 답을 따로 입력하지 않고 풀이 마지막에 답(예: x = 4, 계산 결과 -7/12, 간단히 한 식 3x+4, 넓이 20)을 쓴다.
@@ -386,10 +403,13 @@ ${codes}
   예: -3x = 1 - 7 다음 줄에 -3x = -8 → 맞는 답 -6 이 음수이므로 SIGN. (-2) × (-3) = -6 → SIGN. -8 + 5 = -13 → SIGN. 4x = -1 + 9 다음 줄에 4x = -10 → 맞는 답 8 은 양수지만 계산식에 음수 -1 이 있으므로 SIGN. 2x = 11 - 3 다음 줄에 2x = 6 → 맞는 답 8 이 양수이므로 ARITH. 15 + 9 = 23 → ARITH.
 - 괄호를 푸는 줄의 실수: 괄호 앞 수를 뒤쪽 항에 곱하지 않았으면 DISTRIBUTE (2(x + 3) → 2x + 3), 괄호 앞이 음수인데 뒤쪽 항의 부호를 바꾸지 않았으면 PAREN_SIGN (-(x + 3) → -x + 3, 7 - (x - 2) → 7 - x - 2).
 - 문자에 값을 넣는 줄에서 괄호 없이 넣어 틀렸으면 SUBSTITUTE 다 (x = -2 일 때 x² 을 -2² = -4 로, 5 - x 를 5 - 2 로). 그 뒤 계산이 맞아도 SIGN 이 아니다.
+- 옮겨 적기 실수는 COPY 다: 첫 줄이 문제 식을 그대로 옮긴 모양인데 숫자·부호 하나가 다르고 그 뒤를 맞게 풀었으면 (문제 2x + 3 = 11, 첫 줄 2x + 5 = 11) firstErrorLine 은 0. 앞 줄에서 x = 4 를 구해 놓고 마지막 줄 답에 x = 7 처럼 다른 값을 썼으면 마지막 줄. 계산을 해서 값이 바뀐 것(11 - 3 = 6)은 COPY 가 아니라 계산 유형이다.
+- 중간 과정 없이 답만 쓰고 틀렸으면 어디서 틀렸는지 알 수 없다. 유형을 짐작해서 단정하지 말고 reason 에 "중간 과정이 없어 어디서 틀렸는지 확인할 수 없다"고 쓰고 needsReview=true.
+- 단위를 빠뜨리거나(cm² 대신 cm) 답의 형식을 지키지 않은 것은 값이 같으면 정답으로 두되 suggestion 에 적는다.
 - 식과 계산이 끝까지 맞는데 최종 답이 정답과 다르면 문제를 다시 읽는다: 주어진 조건(양수·자연수·범위 등)에 맞지 않는 값까지 답했으면 CONDITION, 묻는 값이 아닌 값을 답했으면 TARGET (x 만 구하고 문제가 묻는 x + 3 을 구하지 않음), 식 자체를 잘못 세웠으면 EXPR_MEANING. 이때 firstErrorLine 은 답을 쓴 마지막 줄이다.
 - 반드시 JSON 하나만 출력한다.`;
 
-  const checks = checkLines(correctedLines, v);
+  const checks = checkLines(correctedLines, v, isEquation && !problem.free ? problem.question : undefined);
   const user = `[문제] ${problem.question}
 [정답] ${problem.answer || "(교사 미입력: 문제를 직접 풀어서 판단하고, 확신이 없으면 needsReview=true)"}
 [교사 검토 해설]
