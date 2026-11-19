@@ -14,7 +14,8 @@ function normalize(s: string) {
     .toLowerCase()
     .replace(/[×✕·]/g, "*")
     .replace(/[−–—]/g, "-")
-    .replace(/÷/g, "/");
+    .replace(/÷/g, "/")
+    .replace(/(\d),(?=\d{3}(?!\d))/g, "$1"); // 천 단위 쉼표 (1,000원 = 1000원, 답 사이 쉼표가 아님)
 }
 
 // 등호 오른쪽 (x=3 → 3)
@@ -43,7 +44,16 @@ export function checkAnswer(answerText: string | null | undefined, expected: str
   const ce = expected.trim().match(CHOICE)?.[0];
   const ca = answerText.trim().match(CHOICE)?.[0];
   if (ce && ca) return ce === ca;
-  const a = forms(answerText);
+  // 답이 여러 개 (근이 두 개 등): 값의 집합으로 비교 — 개수와 값이 모두 같아야 정답, 순서는 상관없음
+  const ma = answers(answerText);
+  const mb = answers(expected);
+  if (ma.length > 1 || mb.length > 1) return ma.length === mb.length && ma.every((x) => mb.some((y) => same(x, y))) && mb.every((y) => ma.some((x) => same(x, y)));
+  return same(answerText, expected);
+}
+
+// 답 하나끼리 같은지 (등호 오른쪽·단위·값이 같은 꼴까지)
+function same(answer: string, expected: string) {
+  const a = forms(answer);
   const b = forms(expected);
   for (const x of a)
     for (const y of b) {
@@ -53,4 +63,24 @@ export function checkAnswer(answerText: string | null | undefined, expected: str
       if (vx !== null && vy !== null && Math.abs(vx - vy) < 1e-9) return true;
     }
   return false;
+}
+
+// 여러 답으로 나누기: '또는'·'혹은'·쉼표로 (괄호 안 쉼표는 순서쌍이라 그대로), '±' 는 + 와 - 둘로.
+//  'x=2 또는 x=3' · 'x=2, 3' · '2, 3' → ['2', '3'] (미지수가 하나면 'x=' 는 뗀다). 'x=2, y=3' 처럼 문자가 다르면 그대로 둔다
+function answers(text: string): string[] {
+  const t = normalize(text).replace(/또는|혹은|이거나|그리고|및|\bor\b/g, ",");
+  const parts: string[] = [];
+  let depth = 0, cur = "";
+  for (const ch of t) {
+    if ("([{".includes(ch)) depth++;
+    if (")]}".includes(ch)) depth--;
+    if (ch === "," && depth === 0) {
+      parts.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  parts.push(cur);
+  const items = parts.filter(Boolean).flatMap((p) => (p.includes("±") ? [p.replace("±", "+"), p.replace("±", "-")] : [p])).map((p) => p.replace(/=\+/, "=").replace(/^\+/, ""));
+  const vars = new Set(items.map((p) => p.match(/^([a-z])=/)?.[1]).filter(Boolean));
+  return vars.size <= 1 ? items.map((p) => p.replace(/^[a-z]=/, "")) : items;
 }
