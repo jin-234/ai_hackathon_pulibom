@@ -28,6 +28,7 @@
 - 자동 배포: GitHub `main` 에 머지·push 되면 자동으로 최신화. PR 을 올리면 미리보기 주소가 따로 생김
 - 수동 배포가 필요하면 저장소 루트에서 `npx vercel deploy --prod` (Root Directory 가 `app` 으로 설정돼 있어 `app` 폴더 안에서 실행하면 안 됨)
 - 환경변수는 Vercel 프로젝트 `pulibom` 설정에 등록돼 있음. 배포판에서는 Claude 다시 읽기를 끔 (`VISION=off`)
+- 자세한 내용(환경변수, 막혔을 때): [`배포.md`](배포.md)
 
 ## 이거부터 보셈
 
