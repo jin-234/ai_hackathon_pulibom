@@ -1,4 +1,5 @@
 import { chat } from "./ai";
+import { parseAiJson } from "./aiJson";
 import { getAssignment, listAssignments, setSupplementReview } from "./assignments";
 import { makeVariants, solveLinear } from "./equation";
 import { draftConceptProblems, sameNumbers } from "./unitProblems";
@@ -217,7 +218,7 @@ ${plan.map((f, i) => `${i + 1}. ${f}`).join("\n")}`;
       let parsed: { items?: { question?: string; equation?: string; why?: string }[] } = {};
       for (let attempt = 0; attempt < 2 && !parsed.items?.length; attempt++) {
         try {
-          parsed = JSON.parse((await chat(system, user, attempt ? 0.4 : 0.7)).match(/\{[\s\S]*\}/)?.[0] ?? "{}");
+          parsed = parseAiJson(await chat(system, user, attempt ? 0.4 : 0.7)) ?? {};
         } catch {
           parsed = {};
         }
@@ -292,9 +293,9 @@ async function verifyWordProblems<T extends { question: string; answer: string }
 - answer 에는 구한 값의 숫자만 쓴다.
 - JSON만 출력: {"results": [{"no": 1, "answer": "...", "problem": ""}]}`;
   try {
-    const parsed = JSON.parse(
-      (await chat(system, items.map((it, i) => `${i + 1}. ${it.question}`).join("\n"), 0)).match(/\{[\s\S]*\}/)?.[0] ?? "{}",
-    ) as { results?: { no?: unknown; answer?: unknown; problem?: unknown }[] };
+    const parsed = (parseAiJson(await chat(system, items.map((it, i) => `${i + 1}. ${it.question}`).join("\n"), 0)) ?? {}) as {
+      results?: { no?: unknown; answer?: unknown; problem?: unknown }[];
+    };
     const ok = new Set<number>();
     for (const r of parsed.results ?? []) {
       const i = Number(r.no) - 1;
@@ -496,7 +497,7 @@ ${after.map(line).join("\n")}
 JSON: {"verdict": "개선|부분 개선|아직 반복|판단 보류", "summary": "2문장 이내", "remaining": ["아직 남은 어려움 (없으면 빈 배열)"], "nextStep": "다음 지도 제안 한 문장"}`;
 
   const text = await chat(system, user, 0.2);
-  const p = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}") as Partial<SupplementReview>;
+  const p = (parseAiJson(text) ?? {}) as Partial<SupplementReview>;
   const verdicts: SupplementReview["verdict"][] = ["개선", "부분 개선", "아직 반복", "판단 보류"];
   const review: SupplementReview = {
     generatedAt: Date.now(),

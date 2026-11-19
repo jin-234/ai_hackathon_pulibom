@@ -72,7 +72,7 @@ export default function MessageThread({ studentId, studentName }: { studentId: s
                 {m.body}
               </div>
               <span className="px-1 text-[10px] text-muted">
-                {new Date(m.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                {new Date(m.createdAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                 {mine && (m.readAt ? " · 읽음" : "")}
               </span>
             </div>

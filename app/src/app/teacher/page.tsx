@@ -57,7 +57,7 @@ function sortStudents(list: StudentStats[], { key, asc }: Sort) {
 function fmtWhen(ms: number | null) {
   if (ms === null) return "-";
   const d = new Date(ms);
-  const time = d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+  const time = d.toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit" });
   return d.toDateString() === new Date().toDateString() ? `오늘 ${time}` : `${d.getMonth() + 1}/${d.getDate()} ${time}`;
 }
 

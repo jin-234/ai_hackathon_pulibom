@@ -454,7 +454,7 @@ export default function AssignPage() {
                 ) : null}
                 {a.problems.length}문항
                 {a.createdAt
-                  ? ` · ${new Date(a.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}`
+                  ? ` · ${new Date(a.createdAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}`
                   : " · 기본 시연 과제"}
                 {a.closedAt ? ` · ${formatDue(a.closedAt)} 마감함` : a.dueAt ? ` · ${formatDue(a.dueAt)} ${a.dueAt <= now ? "마감됨" : "마감 예정"}` : ""}
               </div>

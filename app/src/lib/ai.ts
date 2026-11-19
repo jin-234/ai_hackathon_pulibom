@@ -1,5 +1,5 @@
 import type { Analysis, ErrorType, Problem } from "./types";
-import { ERROR_LABEL, LOW_OCR_CONFIDENCE, asErrorType, variableOf } from "./types";
+import { ERROR_LABEL, LOW_OCR_CONFIDENCE, asErrorType, falseNumberEquation, variableOf } from "./types";
 
 export { variableOf };
 import { env } from "./env";
@@ -7,6 +7,7 @@ import { linearForm, solveLinear } from "./equation";
 import { gradeName } from "./curriculum";
 import { describeFigure } from "./figure";
 import { asLessonId, conceptListText } from "./concepts";
+import { parseAiJson } from "./aiJson";
 
 // AI 호출 모음. 모델은 .env 로 교체 가능하게 둔다.
 //   ANALYSIS_BASE_URL / ANALYSIS_MODEL / ANALYSIS_API_KEY 를 바꾸면
@@ -17,6 +18,17 @@ const OCR_URL = () => env("UPSTAGE_OCR_URL") ?? "https://api.upstage.ai/v1/docum
 const BASE_URL = () => env("ANALYSIS_BASE_URL") ?? "https://api.upstage.ai/v1";
 const MODEL = () => env("ANALYSIS_MODEL") ?? "solar-pro4";
 const ANALYSIS_KEY = () => env("ANALYSIS_API_KEY") || UPSTAGE_KEY();
+
+// 외부 AI 호출 시간 제한: 응답이 없으면 끝없이 기다려 풀이가 '분석 중'에 멈추지 않게 (본문을 다 받을 때까지 포함)
+async function timedFetch(url: string, init: RequestInit, ms: number, what: string) {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(ms) });
+  } catch (e) {
+    const name = (e as Error).name;
+    if (name === "TimeoutError" || name === "AbortError") throw new Error(`${what} 응답이 ${ms / 1000}초 안에 오지 않아 멈췄어요.`);
+    throw e;
+  }
+}
 
 export function hasUpstageKey() {
   return UPSTAGE_KEY().length > 0;
@@ -35,11 +47,11 @@ export async function runOcr(
   const form = new FormData();
   form.append("document", new Blob([new Uint8Array(png)], { type: "image/png" }), "solution.png");
   form.append("model", "ocr");
-  const res = await fetch(OCR_URL(), {
+  const res = await timedFetch(OCR_URL(), {
     method: "POST",
     headers: { Authorization: `Bearer ${UPSTAGE_KEY()}` },
     body: form,
-  });
+  }, 45000, "OCR");
   if (!res.ok) throw new Error(`OCR 실패 ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const raw = (await res.json()) as { text?: string; pages?: { words?: OcrWord[] }[] };
   const words = (raw.pages ?? []).flatMap((p) => p.words ?? []).filter((w) => w.text.trim() && w.boundingBox?.vertices?.length);
@@ -114,7 +126,8 @@ function groupWordsIntoLines(words: OcrWord[]) {
 function normalizeMath(line: string, v = "x") {
   let s = line.replace(/[−–—]/g, "-");
   if (v === "x") {
-    s = s.replace(/[×✕✗χX]/g, "x");
+    // 양쪽이 숫자·괄호인 × 는 곱셈 그대로 (고등 풀이의 2×5, 3×(-2)). 그 밖의 ×·X 는 x 를 잘못 읽은 것 (2×+3, 3×=12)
+    s = s.replace(/χ/g, "x").replace(/[×✕✗X]/g, (m, at: number, str: string) => (/[\d)]/.test(str[at - 1] ?? "") && /[\d(]/.test(str[at + 1] ?? "") ? "×" : "x"));
     if (s.includes(")(") && !parensBalanced(s)) s = s.replace(/\)\(/g, "x");
   } else if (v) s = s.split(v.toUpperCase()).join(v);
   if (!v) return s;
@@ -141,6 +154,8 @@ function parensBalanced(s: string) {
 // x 가 없는 등식은 일차방정식 풀이에 나올 수 없으므로 학생 풀이를 '맞게' 고치는 것이 아니다.
 export function restoreMissingX(line: string): string {
   if (line.includes("x") || (line.match(/=/g) ?? []).length !== 1) return line;
+  // 성립하는 숫자 등식(10=10, 검산 줄)은 학생이 그대로 쓴 것이다. 성립하지 않을 때만 x 를 숫자로 읽은 흔적으로 본다
+  if (!falseNumberEquation(line)) return line;
   const m = line.match(/^(-?)(\d*)([0279])(=-?[\d/]+)$/);
   return m ? `${m[1]}${m[2]}x${m[4]}` : line;
 }
@@ -205,7 +220,7 @@ ${
     .join("\n")}`;
   try {
     const text = await chat(system, user, 0);
-    const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}") as { lines?: unknown[] };
+    const parsed = (parseAiJson(text) ?? {}) as { lines?: unknown[] };
     const lines = Array.isArray(parsed.lines) ? parsed.lines.map((l) => normalizeMath(String(l), v)) : [];
     if (lines.length !== ocrLines.length) return ocrLines;
     // 안전장치: AI가 학생 풀이를 '맞게' 고쳐 버리는 것을 코드로 막는다
@@ -231,7 +246,7 @@ function digitsPreserved(raw: string, fixed: string) {
 }
 
 export async function chat(system: string, user: string, temperature: number) {
-  const res = await fetch(`${BASE_URL()}/chat/completions`, {
+  const res = await timedFetch(`${BASE_URL()}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${ANALYSIS_KEY()}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -242,7 +257,7 @@ export async function chat(system: string, user: string, temperature: number) {
       ],
       temperature,
     }),
-  });
+  }, 60000, "AI");
   if (!res.ok) throw new Error(`AI 호출 실패 ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
   return data.choices?.[0]?.message?.content ?? "";
@@ -372,12 +387,15 @@ export async function analyzeSolution(input: {
   durationSec: number;
   erases: number;
   grade?: number | null; // 학생 반의 학년 (1~3 중학교, 4 고1, 5 고2). 프롬프트의 학년·OCR 보정 내용에 쓴다
+  answerText?: string; // 학생이 답안 칸에 따로 쓴 최종 답 (있으면 이 답으로 채점)
 }): Promise<Analysis> {
   const { problem, ocrLines, durationSec, erases } = input;
   // 미지수 글자와 방정식 문항인지 (문장제는 정답이 'x=…' 인 것): 방정식이면 x 가 빠진 줄을 되돌릴 수 있다
   const v = variableOf(problem);
   const isEquation = !!v && ((problem.question.includes(v) && problem.question.includes("=") && !problem.free) || new RegExp(`^${v}=`).test(problem.answer.replace(/\s/g, "")));
   const correctedLines = ocrLines.length ? await correctOcr(ocrLines, input.ocrFractions, isEquation, v, input.grade) : [];
+  // 일차방정식 검산은 일차방정식 문항에서만 (이차·지수·로그·삼각·근호·근이 여러 개인 문항은 줄마다 '해'가 달라지는 게 정상이라 실수로 잘못 알리게 됨)
+  const notLinear = /\^|²|³|log|sin|cos|tan|lim|∫|Σ|√/.test(problem.question) || /또는|,|±/.test(problem.answer);
   // 인식 불확실: OCR 신뢰도가 낮거나, 보정 후에도 획에서 찾은 분수만큼 '/' 가 없는 줄
   const lowConf = ocrLines.map(
     (_, i) =>
@@ -407,7 +425,7 @@ ${codes}
 5단계 근거 쓰기: reason 에 틀린 식을 인용하고 "무엇을 무엇으로 잘못 바꿨는지"를 구체적으로 쓴다 (예: "2x + 3 = 11 에서 3 을 이항할 때 부호를 바꾸지 않아 2x = 11 + 3 이 됐다").
 
 아래 풀이는 OCR 결과를 글자 모양 기준으로 보정한 것이다. 보정이 틀렸을 수 있으니 이상하면 needsReview=true.
-학생은 답을 따로 입력하지 않고 풀이 마지막에 답(예: x = 4, 계산 결과 -7/12, 간단히 한 식 3x+4, 넓이 20)을 쓴다.
+${input.answerText ? `학생은 풀이와 따로 [답안 칸]에 최종 답을 썼다. correct 는 [답안 칸]의 답으로 정한다. 풀이 마지막에서 구한 값과 [답안 칸]의 답이 다르면 옮겨 적다 바꾼 것(COPY)인지 본다 (이때 firstErrorLine 은 풀이 마지막 줄).` : "학생은 답을 따로 입력하지 않고 풀이 마지막에 답(예: x = 4, 계산 결과 -7/12, 간단히 한 식 3x+4, 넓이 20)을 쓴다."}
 식이 아닌 계산·값 구하기 문항(혼합 계산, 소수, 비율, 넓이 등)도 나온다. 단위(cm², %)를 빼고 써도 값이 같으면 정답이다. 풀이에서 최종 답을 직접 찾아 정답과 비교한다.
 값이 같으면 정답이다 (약분 전 분수·대분수·항의 순서만 다른 식 포함). 약분하지 않은 것은 정답으로 두되 suggestion 에 적는다.
 규칙:
@@ -440,7 +458,16 @@ ${codes}
 [개념 목록] (id 학년 단원 > 소단원: 학습 내용. 학생 학년까지)
 ${conceptListText(input.grade)}`;
 
-  const checks = checkLines(correctedLines, v, isEquation && !problem.free ? problem.question : undefined);
+  const checks = notLinear ? correctedLines.map(() => "") : checkLines(correctedLines, v, isEquation && !problem.free ? problem.question : undefined);
+  // 학생의 답: 보통 마지막 줄. 일차가 아닌 문항에서 근을 한 줄에 하나씩 썼으면 (… → x=2 → x=3) 끝의 'x=…' 줄 모두
+  //  (일차방정식에서 x=4 다음 x=7 은 옮겨 적기 실수라 마지막 줄만)
+  const trailingRoots = (() => {
+    if (!notLinear) return [];
+    let k = correctedLines.length;
+    while (k > 0 && /^[a-z]=[^=]+$/.test(correctedLines[k - 1].replace(/\s/g, ""))) k--;
+    return correctedLines.slice(k);
+  })();
+  const answerLines = trailingRoots.length >= 2 ? trailingRoots : correctedLines.slice(-1);
   const user = `[문제] ${problem.question}${problem.figure ? `\n[그림] ${describeFigure(problem.figure)}` : ""}
 [정답] ${problem.answer || "(교사 미입력: 문제를 직접 풀어서 판단하고, 확신이 없으면 needsReview=true)"}
 [교사 검토 해설]
@@ -449,12 +476,20 @@ ${problem.solution.length ? problem.solution.map((s, i) => `${i + 1}. ${s}`).joi
 
 [학생 풀이 (줄 번호: 보정된 식  /  OCR 원문)]
 ${ocrLines.length ? ocrLines.map((l, i) => `${i}: ${correctedLines[i]}  /  ${l}${lowConf[i] ? "  [인식 불확실]" : ""}${markNote(input.ocrMarks, i)}${checks[i] ? `  ${checks[i]}` : ""}`).join("\n") : "(인식된 내용 없음)"}${markSummary(input.ocrMarks)}
-${ocrLines.length ? `[학생이 답으로 쓴 마지막 줄] ${correctedLines[ocrLines.length - 1]}  (이 줄에 쓰인 값 전체가 학생의 답이다. 이 중 일부만 골라서 채점하지 않는다)\n` : ""}[풀이 시간] ${durationSec}초, [지운 횟수] ${erases}회 (참고용, 이것만으로 이해도를 판단하지 말 것)
+${
+    input.answerText
+      ? `[답안 칸] ${input.answerText}  (학생이 최종 답으로 따로 쓴 것. 채점은 이 답으로 한다)\n${ocrLines.length ? `[풀이 마지막 줄] ${correctedLines[ocrLines.length - 1]}\n` : ""}`
+      : ocrLines.length
+        ? answerLines.length > 1
+          ? `[학생이 답으로 쓴 마지막 줄들] ${answerLines.join(", ")}  (근을 한 줄에 하나씩 썼다. 이 줄들의 값 전체가 학생의 답이다)\n`
+          : `[학생이 답으로 쓴 마지막 줄] ${answerLines[0]}  (이 줄에 쓰인 값 전체가 학생의 답이다. 이 중 일부만 골라서 채점하지 않는다)\n`
+        : ""
+  }[풀이 시간] ${durationSec}초, [지운 횟수] ${erases}회 (참고용, 이것만으로 이해도를 판단하지 말 것)
 
 다음 형식의 JSON으로 답하라:
 {"recognizedAnswer": "풀이에서 찾은 최종 답 (예: x=4) 또는 null", "correct": true|false|null, "firstErrorLine": 줄번호 또는 null, "errorType": "4단계에서 고른 코드", "concept": "관련 개념", "errorConcept": "틀린 단계의 개념 또는 null", "errorLessonId": "틀린 단계의 소단원 'id 소단원이름' ([개념 목록]에서) 또는 null", "reason": "어디서 무엇을 잘못했는지 (틀린 식 인용, 2문장 이내)", "suggestion": "교사가 학생에게 해볼 확인 질문 또는 보충 지도 방향 (2문장 이내)", "needsReview": true|false}`;
 
-  const res = await fetch(`${BASE_URL()}/chat/completions`, {
+  const res = await timedFetch(`${BASE_URL()}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${ANALYSIS_KEY()}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -465,13 +500,13 @@ ${ocrLines.length ? `[학생이 답으로 쓴 마지막 줄] ${correctedLines[oc
       ],
       temperature: 0, // 같은 풀이면 같은 채점·오류 유형 (학생별 약점 집계의 기준)
     }),
-  });
+  }, 90000, "채점 AI");
   if (!res.ok) throw new Error(`분석 실패 ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = (await res.json()) as { choices?: { message?: { content?: string } }[]; model?: string };
   const text = data.choices?.[0]?.message?.content ?? "";
-  const json = text.match(/\{[\s\S]*\}/)?.[0];
-  if (!json) throw new Error(`분석 결과에서 JSON을 찾지 못함: ${text.slice(0, 200)}`);
-  const parsed = JSON.parse(json) as Partial<Analysis>;
+  // LaTeX 가 섞여도 읽는다 (aiJson.ts). 그래도 못 읽으면 오류
+  const parsed = parseAiJson<Partial<Analysis>>(text);
+  if (!parsed) throw new Error(`분석 결과에서 JSON을 찾지 못함: ${text.slice(0, 200)}`);
   const errorType: ErrorType = asErrorType(parsed.errorType) ?? "UNREADABLE";
   const firstErrorLine = typeof parsed.firstErrorLine === "number" ? parsed.firstErrorLine : null;
   return {
@@ -488,8 +523,9 @@ ${ocrLines.length ? `[학생이 답으로 쓴 마지막 줄] ${correctedLines[oc
     suggestion: parsed.suggestion ?? "",
     needsReview:
       Boolean(parsed.needsReview) ||
-      ocrLines.length === 0 ||
-      !parsed.recognizedAnswer ||
+      // 답안 칸에 답이 있으면 풀이를 못 읽었어도 답으로 채점할 수 있다
+      (ocrLines.length === 0 && !input.answerText) ||
+      (!parsed.recognizedAnswer && !input.answerText) ||
       correctedLines.some((l) => l.includes("?")) ||
       // 오류로 지목한 줄이나 답 줄을 OCR이 확신 없이 읽었으면 교사 확인으로 돌린다
       (firstErrorLine !== null && Boolean(lowConf[firstErrorLine])) ||
