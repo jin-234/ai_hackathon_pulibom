@@ -72,7 +72,7 @@ export function CurriculumPicker({
               setUnitId(unitId === u.id ? null : u.id);
               setLesson(null);
             }}
-            className={`rounded-full px-3 py-1 text-xs ${unitId === u.id ? "bg-ink font-semibold text-paper" : "border border-line text-muted hover:bg-sand"}`}
+            className={`rounded-full px-3 py-1 text-xs ${unitId === u.id ? "bg-honey font-semibold text-ink" : "border border-line text-muted hover:bg-sand"}`}
           >
             {u.no}. {u.name}
           </button>
