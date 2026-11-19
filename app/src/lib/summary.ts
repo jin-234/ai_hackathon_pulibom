@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { chat, ERROR_GUIDE, SURVEY_RESPONDENTS, TEACHER_PICKS } from "./ai";
 import { listAssignments } from "./assignments";
 import { statsForStudent } from "./classStats";
@@ -9,6 +10,7 @@ import { PROBLEMS } from "./problems";
 import { listSubmissions } from "./store";
 import { ERROR_LABEL, handwritingIssue, hasHandwritingIssue, inkStats, type ErrorType, type Problem, type StudentSummary, type Submission, type WeakProof } from "./types";
 import { env } from "./env";
+import { parseAiJson } from "./aiJson";
 import { correctOf } from "./verdict";
 import { query } from "./db";
 
@@ -28,8 +30,18 @@ async function context(studentId: string) {
   const mine = all.filter((s) => s.studentId === studentId && s.status !== "pending").sort((a, b) => a.submittedAt - b.submittedAt);
   const subs = mine.filter((s) => problems.has(s.problemId)).slice(-MAX_SUBMISSIONS);
   // 풀이가 추가·재분석·교사 확인되면 바뀌는 값
+  //  다시 분석하면 상태는 그대로(done → done)일 수 있어서 채점 내용(정오·오류 유형·틀린 줄·읽은 줄·근거)과 교사 확인·답안 칸까지 넣는다
   // 학년이 바뀌면(중3 → 고1) 중학 기초 테마가 붙거나 빠지므로 학년도 넣는다
-  const fingerprint = `p${PROMPT_VERSION}g${grade ?? 0}#` + subs.map((s) => `${s.id}:${s.status}:${s.teacher?.confirmedAt ?? 0}`).join("|");
+  const fingerprint =
+    `p${PROMPT_VERSION}g${grade ?? 0}#` +
+    createHash("sha1")
+      .update(
+        JSON.stringify(
+          subs.map((s) => [s.id, s.status, s.answerText ?? "", s.analysis ? [s.analysis.correct, s.analysis.errorType, s.analysis.firstErrorLine, s.analysis.errorLessonId, s.analysis.correctedLines, s.analysis.reason] : null, s.teacher ?? null]),
+        ),
+      )
+      .digest("hex")
+      .slice(0, 16);
   return { problems, subs, fingerprint, grade };
 }
 
@@ -310,9 +322,9 @@ ${records}
 {"overview": "2~3문장 요약", "strengths": ["잘하고 있는 점 (최대 3개)"], "weakConcepts": [{"type": "오류 유형 코드", "concept": "실수 유형 이름", "evidence": "근거 풀이의 틀린 줄을 인용해 무엇을 잘못했는지", "proofs": [근거 풀이 번호]}], "checkQuestions": ["교사가 학생에게 물어볼 확인 질문 (최대 3개)"], "practice": ["보충 연습 방향 (최대 3개, 구체적인 문항 유형으로)"], "cautions": ["교사가 직접 확인해야 할 점 (없으면 빈 배열)"]}`;
 
   const text = await chat(system, user, 0); // 같은 기록이면 최대한 같은 요약이 나오게
-  const json = text.match(/\{[\s\S]*\}/)?.[0];
-  if (!json) throw new Error("AI 응답에서 요약을 찾지 못했어요. 다시 시도해 주세요.");
-  const p = JSON.parse(json) as Partial<StudentSummary>;
+  // LaTeX 가 섞여도 읽는다 (aiJson.ts)
+  const p = parseAiJson<Partial<StudentSummary>>(text);
+  if (!p) throw new Error("AI 응답에서 요약을 찾지 못했어요. 다시 시도해 주세요.");
   const arr = (v: unknown) => (Array.isArray(v) ? v.map(String).filter(Boolean).slice(0, 5) : []);
   const summary: StudentSummary = {
     studentId,

@@ -242,7 +242,7 @@ export function DatePicker({
         aria-label={ariaLabel}
         className={`rounded-full border border-line bg-paper px-3 py-1 text-left ${cur ? "" : "text-muted"} ${className}`}
       >
-        {cur ? cur.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric", weekday: "short" }) : placeholder}
+        {cur ? cur.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", weekday: "short" }) : placeholder}
       </button>
       {open && (
         <div className="absolute left-0 top-full z-30 mt-2 w-[min(20rem,calc(100vw-2rem))] rounded-2xl border border-line bg-[#fffdf8]/[0.97] p-3 shadow-lg">

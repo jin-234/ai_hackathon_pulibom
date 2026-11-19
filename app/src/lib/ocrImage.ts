@@ -433,7 +433,8 @@ const MAX_RETRY = 4;
 const SUSPECT = 0.5;
 
 // opts.vision: OCR 이 확신 없는 줄을 이미지 입력 LLM 으로 다시 읽기 (기본 켬, 키가 없으면 건너뜀)
-export async function ocrFromStrokes(strokes: Stroke[], v = "x", opts: { vision?: boolean; visionMode?: VisionMode } = {}) {
+// opts.question: 문제 글 (다시 읽을 줄을 고를 때 문제에 나온 글자는 이상한 글자로 보지 않게)
+export async function ocrFromStrokes(strokes: Stroke[], v = "x", opts: { vision?: boolean; visionMode?: VisionMode; question?: string } = {}) {
   const img = await strokesToOcrImage(strokes, v);
   if (!img) return null;
   const first = await runOcr(img.png, img.bands, v);
@@ -466,7 +467,7 @@ export async function ocrFromStrokes(strokes: Stroke[], v = "x", opts: { vision?
   // OCR 이 끝내 확신하지 못한 줄만 이미지 입력 LLM 으로 다시 읽는다 (빈 줄도 채울 수 있다)
   let vision: { model: string; mode: VisionMode; ocr: string[]; lines: { line: number; ocr: string; vision: string }[] } | undefined;
   if (opts.vision !== false && hasVision()) {
-    const suspects = suspectLines(lines, confidences, fractions, v);
+    const suspects = suspectLines(lines, confidences, fractions, v, opts.question);
     const mode = opts.visionMode ?? VISION_MODE();
     if (suspects.length && mode === "full") {
       // 이미지 전체를 다시 읽어 통째로 바꾼다 (줄 수가 달라질 수 있음 → 획에서 찾은 분수 수는 줄 수가 같을 때만 유지)
