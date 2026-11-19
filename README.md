@@ -44,10 +44,27 @@
 | 단계 | 모델 | 역할 |
 |---|---|---|
 | 문항 구조화 | Upstage Document Parse | 문제지 → 문항 번호·내용·수식 영역 |
-| 손글씨 인식 | Upstage Document OCR | 학생 필기 문자·숫자 + 위치 |
+| 손글씨 인식 | **Upstage OCR → Mathpix OCR → Claude** | 학생 필기 문자·숫자·수식 + 위치 (아래 폴백 순서) |
 | 풀이 분석 | LG AI연구원 EXAONE 4.5 | 원본 이미지 + OCR + 정답 해설로 오류 의심 단계·오류 유형 |
 | 요약·지도 제안 | Upstage Solar Pro | 학생별 취약 개념, 지도 우선순위, 보충 질문·유사 문항 |
 | (확장) | VARCO-VISION, 믿:음, A.X, VARCO Voice | 재검토, 수준별 설명, 교사 질의, 음성 설명 |
+
+### 손글씨 OCR 폴백 순서
+
+```
+풀이 이미지
+  → ① Upstage OCR      ── 인식 성공 → 사용
+       │ 인식 실패
+  → ② Mathpix OCR      ── 인식 성공 → 사용
+       │ 인식 실패
+  → ③ Claude (Vision)  ── 인식 성공 → 사용
+       │ 인식 실패
+  → "확인 필요" 표시 (교사가 직접 확인)
+```
+
+- **인식 실패 기준**: 결과가 비어 있음 / 신뢰도(confidence)가 기준값 미만 / 수식으로 파싱이 안 됨 / API 오류·타임아웃
+- 결과마다 **어느 엔진이 인식했는지**(`upstage`·`mathpix`·`claude`)를 함께 저장해서, 교사 화면과 정확도 비교에 쓴다
+- 키: `UPSTAGE_API_KEY`, `MATHPIX_APP_ID`, `MATHPIX_APP_KEY`, `ANTHROPIC_API_KEY` (`.env`)
 
 오류 유형 예시: 부호·계산 / 동류항 정리 / 등식 변형 (`2x+3=11` → `2x=11+3`)
 
