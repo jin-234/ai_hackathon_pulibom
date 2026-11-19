@@ -1,4 +1,5 @@
 // 공통 타입 정의
+import type { Figure } from "./figure";
 
 export type ErrorType =
   | "SIGN" // 부호·정수 계산 (음수가 낀 계산)
@@ -109,6 +110,7 @@ export type Problem = {
   concept: string; // 관련 개념
   solution: string[]; // 교사 검토 해설 (단계별)
   templateId?: string; // 문제은행 틀에서 만든 문항이면 그 틀
+  figure?: Figure; // 문항 그림 (설계도 또는 선생님이 올린 이미지)
 };
 
 export type Point = { x: number; y: number; t: number };

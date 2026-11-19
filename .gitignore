@@ -9,3 +9,6 @@ ai-test/samples/
 xcuserdata/
 DerivedData/
 *.xcuserstate
+
+# Vercel CLI 연결 정보
+.vercel

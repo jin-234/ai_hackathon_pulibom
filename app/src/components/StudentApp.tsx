@@ -1,4 +1,6 @@
 "use client";
+import FigureView from "@/components/FigureView";
+import QuestionText from "@/components/QuestionText";
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -296,6 +298,8 @@ export default function StudentApp({
           >
             {problem.question}
           </div>
+          {/* 문항 그림 (도형·좌표·그래프·입체도형 또는 선생님이 올린 그림) */}
+          {problem.figure && <FigureView figure={problem.figure} className="mx-auto" />}
           {problem.concept && (
             <span className="w-fit rounded-full bg-sand px-3 py-1 text-xs text-muted">{problem.concept}</span>
           )}

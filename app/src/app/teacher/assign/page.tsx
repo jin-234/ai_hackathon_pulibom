@@ -5,6 +5,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AutoGrowTextarea } from "@/components/AutoGrowTextarea";
 import { CurriculumPicker } from "@/components/CurriculumPicker";
 import { DateTimePicker } from "@/components/DateTimePicker";
+import { FigureEditor } from "@/components/FigureEditor";
+import FigureView from "@/components/FigureView";
+import type { Figure } from "@/lib/figure";
 import { useTeacherClass } from "@/components/useTeacherClass";
 import { makeVariants, solveLinear, type Solved } from "@/lib/equation";
 import { formatDue, statusOf, type Assignment as BaseAssignment, type AssignmentStatus } from "@/lib/types";
@@ -31,7 +34,8 @@ const STATUS_BADGE: Record<AssignmentStatus, { label: string; cls: string }> = {
 // templateId: 문제은행 틀에서 만든 문항 (교육과정). 문제를 고치면 틀·정답 연결을 뗀다
 // ai: AI 가 만든 문항 초안 (정답을 교사가 확인해야 함)
 // doubt: AI 검산이 어긋난 이유 (정답을 꼭 확인)
-type Draft = { key: string; question: string; answer: string; solution: string; concept: string; open: boolean; templateId?: string; ai?: boolean; doubt?: string };
+// figure: 문항 그림 (AI 가 만든 설계도 또는 선생님이 올린 이미지)
+type Draft = { key: string; question: string; answer: string; solution: string; concept: string; open: boolean; templateId?: string; ai?: boolean; doubt?: string; figure?: Figure };
 
 const newKey = () => Math.random().toString(36).slice(2, 9);
 const emptyDraft = (question = ""): Draft => ({ key: newKey(), question, answer: "", solution: "", concept: "", open: false });
@@ -117,7 +121,7 @@ export default function AssignPage() {
     try {
       const questions = drafts
         .filter((d) => d.question.trim())
-        .map(({ question, answer, solution, concept, templateId }) => ({ question, answer, solution, concept, ...(templateId ? { templateId } : {}) }));
+        .map(({ question, answer, solution, concept, templateId, figure }) => ({ question, answer, solution, concept, ...(templateId ? { templateId } : {}), ...(figure ? { figure } : {}) }));
       const res = await fetch("/api/assignments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -201,6 +205,7 @@ export default function AssignPage() {
                     ...(it.templateId ? { templateId: it.templateId } : {}),
                     ...(it.source === "ai" ? { ai: true } : {}),
                     ...(it.doubt ? { doubt: it.doubt, open: true } : {}),
+                    ...(it.figure ? { figure: it.figure } : {}),
                   })),
                 ])
               }
@@ -231,6 +236,9 @@ export default function AssignPage() {
                     </button>
                   </div>
 
+                  <div className="mt-2 pl-9">
+                    <FigureEditor figure={d.figure} onChange={(figure) => patch(d.key, { figure })} />
+                  </div>
                   {hasText && (
                     <div className="mt-2 flex flex-col gap-2 pl-9 text-xs">
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -482,7 +490,10 @@ export default function AssignPage() {
                   {a.problems.map((p, i) => (
                     <li key={p.id} className="flex gap-2 rounded-xl bg-paper/80 px-3 py-1.5 text-sm leading-relaxed">
                       <span className="shrink-0 text-xs leading-6 text-muted">{i + 1}</span>
-                      <span className={`min-w-0 break-words ${p.free ? "" : "font-[family-name:var(--font-math)] italic"}`}><QuestionText text={p.question} /></span>
+                      <span className={`min-w-0 break-words ${p.free ? "" : "font-[family-name:var(--font-math)] italic"}`}>
+                        <QuestionText text={p.question} />
+                        {p.figure && <FigureView figure={p.figure} className="mt-1.5" />}
+                      </span>
                       {/* 설정한 정답 (비워 둔 일차방정식은 풀이기 정답). 누르면 고치기 */}
                       {answerEdit?.problemId === p.id ? (
                         <form

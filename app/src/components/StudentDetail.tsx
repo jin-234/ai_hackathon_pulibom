@@ -1,4 +1,5 @@
 "use client";
+import FigureView from "@/components/FigureView";
 import QuestionText from "@/components/QuestionText";
 
 import { useEffect, useRef, useState } from "react";
@@ -509,6 +510,7 @@ export function SubmissionCard({
             </button>
           )}
         </div>
+        {problem?.figure && <FigureView figure={problem.figure} />}
         {/* 정답 · 학생 답 */}
         <div className="grid grid-cols-2 gap-2">
           <div className="rounded-xl border border-sage/40 bg-sage-soft px-3 py-2">
