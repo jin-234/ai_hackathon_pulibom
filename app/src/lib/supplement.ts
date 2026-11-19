@@ -1,7 +1,8 @@
 import { chat } from "./ai";
 import { getAssignment, listAssignments, setSupplementReview } from "./assignments";
 import { makeVariants, solveLinear } from "./equation";
-import { sameNumbers } from "./unitProblems";
+import { draftConceptProblems, sameNumbers } from "./unitProblems";
+import { getStudentGrade } from "./roster";
 import { describeAdapt, getProfile, intersectProfiles, toAdapt, type Adapt, type LearningProfile } from "./learningProfile";
 import { pickFromBank } from "./problemBank";
 import { env } from "./env";
@@ -86,6 +87,46 @@ function describeBasis(subs: Submission[], problems: Map<string, Problem>) {
     const lines = (s.analysis?.correctedLines?.length ? s.analysis.correctedLines : s.ocrLines).join(" → ");
     return `${p?.question ?? s.question ?? ""} : ${lines || "(인식 실패)"}${s.analysis?.reason ? ` (${s.analysis.reason})` : ""}`;
   });
+}
+
+// ── 틀린 단계의 개념 위주 보충 (인수분해·정수 계산처럼 일차방정식 풀이기로 만들 수 없는 개념) ──
+// 근거 풀이에서 가장 많이 나온 '틀린 단계의 개념' (채점 때 AI 가 errorConcept 로 남김). 없으면 문항 개념
+function stepConcept(subs: Submission[], problems: Map<string, Problem>): string | null {
+  const counts = new Map<string, number>();
+  for (const s of subs) {
+    const c = s.analysis?.errorConcept || s.analysis?.concept || problems.get(s.problemId)?.concept;
+    if (c) counts.set(c, (counts.get(c) ?? 0) + 1);
+  }
+  return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+}
+const isLinearProblem = (p: Problem | undefined) => {
+  if (!p) return false;
+  if (/^[a-z]=/.test(p.answer.replace(/\s/g, ""))) return true; // 답이 x = … 인 문장제
+  try {
+    solveLinear(p.question);
+    return true;
+  } catch {
+    return false;
+  }
+};
+// 일차방정식(등식의 성질·이항)을 틀린 게 아니고, 근거 풀이에 일차방정식이 아닌 문항이 있으면 개념 위주 보충으로 간다
+// (중1 일차방정식에서 괄호 풀기를 틀린 것은 지금처럼 문제은행·풀이기 경로가 더 정확하다)
+function needsConceptPath(concept: string | null, subs: Submission[], problems: Map<string, Problem>) {
+  if (!concept || (/일차방정식|등식의\s*성질|이항/.test(concept) && !/이차|연립|부등식/.test(concept))) return false;
+  return subs.some((s) => !isLinearProblem(problems.get(s.problemId)));
+}
+async function conceptCandidates(grade: number, concept: string, basis: string[], problems: Map<string, Problem>, count: number): Promise<SupplementCandidate[]> {
+  const existing = new Set([...problems.values()].map((p) => p.question.replace(/\s/g, "")));
+  const items = (await draftConceptProblems({ grade, concept, basis, count: count + 1 })).filter((it) => !existing.has(it.question.replace(/\s/g, "")));
+  if (!items.length) throw new Error("보충 문항을 만들지 못했어요. 다시 시도하거나 직접 입력해 주세요.");
+  return items.slice(0, count).map((it) => ({
+    question: it.question,
+    answer: it.answer,
+    concept,
+    why: it.doubt ? `⚠ 검산이 어긋났어요. 정답을 꼭 확인해 주세요 (${it.doubt})` : `풀이에서 틀린 '${concept}' 단계를 직접 연습하는 문항이에요.`,
+    source: "ai" as const,
+    calc: true, // 풀이기로 못 푸니 AI 가 정하고 검산한 정답을 그대로 쓴다
+  }));
 }
 
 // 식의 모양 (숫자를 n 으로): '5x - 2 = 38' 과 '7x - 8 = 20' 은 같은 모양 → AI 문항은 이미 고른 문항과 모양이 같으면 버린다
@@ -261,7 +302,13 @@ async function verifyWordProblems<T extends { question: string; answer: string }
 
 // 개인 보충: 학생의 오답(문항별 최신 풀이)을 근거로 보충 문항 후보를 만든다
 export async function draftSupplement(studentId: string, count = 3): Promise<SupplementDraft> {
-  const [subs, problems, summary, profile] = await Promise.all([listSubmissions({ studentId }), problemIndex(), getSummary(studentId), getProfile(studentId)]);
+  const [subs, problems, summary, profile, grade] = await Promise.all([
+    listSubmissions({ studentId }),
+    problemIndex(),
+    getSummary(studentId),
+    getProfile(studentId),
+    getStudentGrade(studentId).catch(() => null),
+  ]);
   const wrong = wrongOf(studentId, subs, problems);
   if (!wrong.length && !summary.summary?.weakConcepts.length) throw new Error("보충할 오답이 아직 없어요. 풀이가 분석된 뒤 다시 시도해 주세요.");
   const adapt = toAdapt(profile);
@@ -275,6 +322,12 @@ export async function draftSupplement(studentId: string, count = 3): Promise<Sup
     problems.get(basisSubs[0]?.problemId ?? "")?.concept ||
     "일차방정식";
   const basis = describeBasis(basisSubs, problems);
+  // 틀린 단계가 인수분해처럼 일차방정식이 아닌 개념이면 그 개념 위주로
+  const step = stepConcept(basisSubs, problems);
+  if (needsConceptPath(step, basisSubs, problems)) {
+    const candidates = await conceptCandidates(grade ?? 1, step!, basis, problems, count);
+    return { concept: step!, targetError, sourceSubmissionIds: basisSubs.map((s) => s.id), basis, candidates, adapted: describeAdapt(profile), profile };
+  }
   const candidates = await fillCandidates({
     concept,
     targetError,
@@ -295,10 +348,11 @@ export async function draftGroupSupplement(
   weak: { targetError: ErrorType | null; concept: string | null },
   count = 4,
 ): Promise<SupplementDraft> {
-  const [problems, subsList, profiles] = await Promise.all([
+  const [problems, subsList, profiles, grade] = await Promise.all([
     problemIndex(),
     Promise.all(studentIds.map((id) => listSubmissions({ studentId: id }))),
     Promise.all(studentIds.map((id) => getProfile(id))),
+    getStudentGrade(studentIds[0] ?? "").catch(() => null),
   ]);
   // 그룹 전원이 이미 된 것만 덜 낸다
   const shared = intersectProfiles(profiles);
@@ -319,6 +373,11 @@ export async function draftGroupSupplement(
   }
   const concept = weak.concept || [...conceptCounts].sort((a, b) => b[1] - a[1])[0]?.[0] || "일차방정식";
   const basis = describeBasis(basisSubs.slice(-4), problems); // AI 입력·화면 표시는 최근 4개만 (학생 이름은 넣지 않음)
+  const step = stepConcept(basisSubs, problems);
+  if (needsConceptPath(step, basisSubs, problems)) {
+    const candidates = await conceptCandidates(grade ?? 1, step!, basis, problems, count);
+    return { concept: step!, targetError, sourceSubmissionIds: basisSubs.map((s) => s.id), basis, candidates, adapted: describeAdapt(shared, "그룹 학생 모두가") };
+  }
   const candidates = await fillCandidates({ concept, targetError, basisSubs, basis, problems, count, adapt: toAdapt(shared) });
   const adapted = describeAdapt(shared, "그룹 학생 모두가");
   return { concept, targetError, sourceSubmissionIds: basisSubs.map((s) => s.id), basis, candidates, adapted };

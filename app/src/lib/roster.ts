@@ -26,6 +26,17 @@ export async function getStudent(id: string): Promise<{ id: string; name: string
   return (await query<{ id: string; name: string }>(`SELECT id, name FROM students WHERE id = $1`, [id]))[0];
 }
 
+// 학생의 지금 학년 (가장 최근에 들어간 반 기준, 1~3 = 중1~중3, 4 = 고1). 반이 없으면 null
+export async function getStudentGrade(id: string): Promise<number | null> {
+  if (!/^[\w-]+$/.test(id)) return null;
+  const rows = await query<{ grade: number }>(
+    `SELECT c.grade FROM class_members m JOIN classes c ON c.id = m.class_id
+      WHERE m.student_id = $1 ORDER BY (m.status = 'active') DESC, m.joined_at DESC LIMIT 1`,
+    [id],
+  );
+  return rows[0]?.grade ?? null;
+}
+
 export async function checkLogin(role: Session["role"], id: string, password: string): Promise<Session | null> {
   if (!id || !password) return null;
   // 비밀번호는 DB에서 crypt() 로 비교 (평문 저장 안 함)

@@ -1,7 +1,9 @@
 import { chat, ERROR_GUIDE, SURVEY_RESPONDENTS, TEACHER_PICKS } from "./ai";
 import { listAssignments } from "./assignments";
 import { statsForStudent } from "./classStats";
-import { getStudent } from "./roster";
+import { getStudent, getStudentGrade } from "./roster";
+import { gradeName } from "./curriculum";
+import { FOUNDATION_SOURCE, foundationOf, themeLabel, type FoundationTheme } from "./foundations";
 import { PROBLEMS } from "./problems";
 import { listSubmissions } from "./store";
 import { ERROR_LABEL, handwritingIssue, hasHandwritingIssue, inkStats, type ErrorType, type Problem, type StudentSummary, type Submission, type WeakProof } from "./types";
@@ -12,20 +14,21 @@ import { query } from "./db";
 // 학생 이름 등 식별정보는 보내지 않는다.
 const MAX_SUBMISSIONS = 30;
 // 요약 프롬프트를 바꾸면 올린다 (예전 프롬프트로 만든 요약은 '새로 요약 필요'로 보이게)
-const PROMPT_VERSION = "10";
+const PROMPT_VERSION = "11";
 // AI 에 넘기는 실수 유형 이름: 교사 설문에 있는 유형은 그 이름으로 (요약이 같은 이름으로 부르게)
 const typeName = (t: ErrorType) => TEACHER_PICKS.find((p) => p.type === t)?.name ?? ERROR_LABEL[t];
 
 async function context(studentId: string) {
-  const [assignments, all] = await Promise.all([listAssignments(), listSubmissions({ studentId })]);
+  const [assignments, all, grade] = await Promise.all([listAssignments(), listSubmissions({ studentId }), getStudentGrade(studentId).catch(() => null)]);
   const problems = new Map<string, Problem>();
   for (const a of assignments) for (const p of a.problems) problems.set(p.id, p);
   for (const p of PROBLEMS) if (!problems.has(p.id)) problems.set(p.id, p);
   const mine = all.filter((s) => s.studentId === studentId && s.status !== "pending").sort((a, b) => a.submittedAt - b.submittedAt);
   const subs = mine.filter((s) => problems.has(s.problemId)).slice(-MAX_SUBMISSIONS);
   // 풀이가 추가·재분석·교사 확인되면 바뀌는 값
-  const fingerprint = `p${PROMPT_VERSION}#` + subs.map((s) => `${s.id}:${s.status}:${s.teacher?.confirmedAt ?? 0}`).join("|");
-  return { problems, subs, fingerprint };
+  // 학년이 바뀌면(중3 → 고1) 중학 기초 테마가 붙거나 빠지므로 학년도 넣는다
+  const fingerprint = `p${PROMPT_VERSION}g${grade ?? 0}#` + subs.map((s) => `${s.id}:${s.status}:${s.teacher?.confirmedAt ?? 0}`).join("|");
+  return { problems, subs, fingerprint, grade };
 }
 
 export async function getSummary(studentId: string): Promise<{ summary: StudentSummary | null; stale: boolean; available: number }> {
@@ -54,7 +57,7 @@ function wrongLineOf(s: Submission): { wrongLine: string; prevLine?: string } | 
   return { wrongLine: lines[i], ...(i > 0 && lines[i - 1] ? { prevLine: lines[i - 1] } : {}) };
 }
 
-function describe(s: Submission, p: Problem, attemptNo: number, no: number) {
+function describe(s: Submission, p: Problem, attemptNo: number, no: number, foundation: FoundationTheme | null) {
   const a = s.analysis;
   const err = s.teacher?.errorType ?? a?.errorType;
   const lines = linesOf(s).join(" / ") || "(인식 실패)";
@@ -76,6 +79,7 @@ function describe(s: Submission, p: Problem, attemptNo: number, no: number) {
       ? `  ✎ 글씨체 문제: ${handwritingIssue(s).nothingRead ? "OCR 이 이 풀이를 하나도 읽지 못했다" : `OCR 이 이 풀이의 ${handwritingIssue(s).lines.length}줄을 이상하게 읽었다 (인식이 틀렸을 수 있다)`}`
       : "",
     skippedSteps(s) ? `  ⤳ 중간 과정 없이 답만 씀` : "",
+    foundation ? `  다시 볼 중학 기초: ${themeLabel(foundation)}` : "",
     s.teacher?.memo ? `  교사 관찰 메모: ${s.teacher.memo}` : "",
     `  풀이 시간 ${st.durationSec}초, 지운 횟수 ${st.erases}회`,
   ]
@@ -86,13 +90,13 @@ function describe(s: Submission, p: Problem, attemptNo: number, no: number) {
 export async function generateSummary(studentId: string): Promise<StudentSummary> {
   const roster = await getStudent(studentId);
   if (!roster) throw new Error("학생을 찾을 수 없어요.");
-  const { problems, subs, fingerprint } = await context(studentId);
+  const { problems, subs, fingerprint, grade } = await context(studentId);
   if (!subs.length) throw new Error("요약할 풀이가 아직 없어요.");
   // 풀이가 그대로면 저장된 요약을 그대로 돌려준다 (같은 기록인데 누를 때마다 결과가 바뀌지 않게)
   const saved = await query<{ data: StudentSummary }>(`SELECT data FROM student_summaries WHERE student_id = $1`, [studentId]).catch(() => []);
   if (saved[0]?.data?.fingerprint === fingerprint) return saved[0].data;
 
-  const summary = await summarize({ studentId, name: roster.name, problems, subs, fingerprint });
+  const summary = await summarize({ studentId, name: roster.name, problems, subs, fingerprint, grade });
   await query(
     `INSERT INTO student_summaries (student_id, data, updated_at) VALUES ($1, $2, now())
      ON CONFLICT (student_id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
@@ -127,20 +131,31 @@ export async function summarize(input: {
   problems: Map<string, Problem>;
   subs: Submission[];
   fingerprint: string;
+  grade?: number | null; // 4 이상(고등학생)이면 틀린 풀이를 중학 기초 테마로 묶는다
 }): Promise<StudentSummary> {
   const { studentId, problems, subs, fingerprint } = input;
+  const grade = input.grade ?? null;
+  const highSchool = (grade ?? 0) >= 4;
+  // 고등학생의 틀린 풀이 → 다시 볼 중학 기초 테마 (오류 유형이 먼저, 안 되면 문항 개념·문제 글로)
+  const errOf = (s: Submission) => s.teacher?.errorType ?? s.analysis?.errorType;
+  const foundationFor = (s: Submission) => {
+    if (!highSchool || (s.analysis?.correct !== false && !s.teacher?.errorType)) return null;
+    const p = problems.get(s.problemId);
+    return foundationOf(errOf(s), [p?.concept, s.analysis?.concept, p?.question ?? s.question].filter(Boolean).join(" "), s.analysis?.errorConcept);
+  };
   const stats = statsForStudent(studentId, input.name, [...new Set(subs.map((s) => s.problemId))].map((id) => problems.get(id)!), subs);
   const attempt = new Map<string, number>();
   const records = subs
     .map((s) => {
       const n = (attempt.get(s.problemId) ?? 0) + 1;
       attempt.set(s.problemId, n);
-      return describe(s, problems.get(s.problemId)!, n, subs.indexOf(s) + 1);
+      return describe(s, problems.get(s.problemId)!, n, subs.indexOf(s) + 1, foundationFor(s));
     })
     .join("\n");
 
   // 오류 유형 집계: 교사가 확인한 유형 우선, 판독이 어렵고 교사가 아직 확인하지 않은 풀이는 뺀다
   const tally = new Map<string, { n: number; problems: Set<string>; subs: Submission[] }>();
+  const foundationTally = new Map<number, { theme: FoundationTheme; n: number; problems: Set<string>; subs: Submission[] }>();
   for (const s of subs) {
     const err = s.teacher?.errorType ?? s.analysis?.errorType;
     if (!err || err === "NONE" || err === "UNREADABLE") continue;
@@ -150,7 +165,20 @@ export async function summarize(input: {
     t.subs.push(s);
     t.problems.add(s.problemId);
     tally.set(err, t);
+    const f = foundationFor(s);
+    if (f) {
+      const ft = foundationTally.get(f.no) ?? { theme: f, n: 0, problems: new Set<string>(), subs: [] };
+      ft.n++;
+      ft.problems.add(s.problemId);
+      ft.subs.push(s);
+      foundationTally.set(f.no, ft);
+    }
   }
+  // 많이 나온 테마부터 (같으면 서로 다른 문항이 많은 것, 그다음 테마 번호 순)
+  const foundations = [...foundationTally.values()].sort((a, b) => b.n - a.n || b.problems.size - a.problems.size || a.theme.no - b.theme.no);
+  const foundationText = foundations.length
+    ? foundations.map((f) => `${themeLabel(f.theme)} ${f.n}회, 서로 다른 문항 ${f.problems.size}개 [풀이 ${f.subs.map((s) => subs.indexOf(s) + 1).join(", ")}]`).join(", ")
+    : "없음";
   // 횟수가 같으면 교사 설문에서 많이 꼽힌 유형을 먼저 (설문에 없는 유형은 뒤)
   const pickRank = (type: string) => {
     const i = TEACHER_PICKS.findIndex((p) => p.type === type);
@@ -201,7 +229,7 @@ export async function summarize(input: {
       });
   };
 
-  const system = `너는 중학교 1학년 수학 교사를 돕는 학습 분석 도우미다. 교사가 풀이를 하나하나 볼 수 없으니, AI 가 문항마다 채점하고 분류해 둔 결과를 모아 이 학생이 무엇에 약한지 정리한다.
+  const system = `너는 ${grade ? gradeName(grade) : "중학교 1학년"} 수학 교사를 돕는 학습 분석 도우미다. 교사가 풀이를 하나하나 볼 수 없으니, AI 가 문항마다 채점하고 분류해 둔 결과를 모아 이 학생이 무엇에 약한지 정리한다.
 다음 순서대로 생각한다:
 1단계: 풀이 기록에서 틀린 풀이마다 어디서 어떤 실수를 했는지 확인한다 (AI 판정의 오류 유형과 근거, 교사 확인이 있으면 그것을 따른다).
 2단계: 같은 종류의 실수끼리 묶는다. [오류 유형 집계]를 기준으로 하되, 기록을 보고 실제로 같은 실수인지 확인한다.
@@ -235,7 +263,14 @@ ${
 - ✎ 글씨체 문제 표시는 수학 실수가 아니다. 약점(weakConcepts)으로 세지 않고, 글씨 이야기는 프로그램이 cautions 에 따로 넣으니 쓰지 않는다. 그 풀이의 식이 이상하면 인식 문제일 수 있으니 실수로 단정하지 않는다.
 - ⤳ 중간 과정 없이 답만 씀 표시도 수학 실수가 아니다. 약점으로 세지 않고, 과정 생략 이야기는 프로그램이 cautions 에 따로 넣으니 쓰지 않는다. 답만 쓰고 틀린 풀이로 어떤 실수인지 짐작하지 않는다.
 - COPY(옮겨 적기 실수)는 계산을 몰라서가 아니라 옮겨 적다 생긴 실수다. 개념 부족으로 쓰지 말고, practice 에는 문제를 옮겨 쓴 첫 줄과 마지막 답을 문제·앞 줄과 대조하는 습관을 쓴다.
-- 교사 관찰 메모와 교사가 확인한 오류 유형을 AI 판정보다 우선한다.
+- 교사 관찰 메모와 교사가 확인한 오류 유형을 AI 판정보다 우선한다.${
+    highSchool
+      ? `
+- 이 학생은 고등학생이다. 고등 문제를 틀린 원인이 중학 기초에 있는지 본다. [중학 기초 테마 집계]는 틀린 풀이마다 다시 봐야 할 중학 기초(${FOUNDATION_SOURCE}의 THEME 01~10)를 프로그램이 정해 센 것이다.
+  ${foundations.length ? `서로 다른 문항 2개 이상에서 나온 테마가 있으면 overview 에 "중학 ○○ 기초가 비어 있어 보여요"처럼 한 번 쓰고, practice 첫 항목을 그 테마를 복습하는 연습으로 쓴다 (예: "THEME 02 문자와 식: 괄호 앞 음수가 있는 일차식 정리부터 다시 연습해요"). 한 문항에서만 나온 테마는 "확인이 필요해 보여요"로만 쓴다.` : "집계가 없으면 중학 기초 이야기를 쓰지 않는다."}
+  집계에 없는 테마를 짐작해서 쓰지 않는다.`
+      : ""
+  }
 - 풀이 시간이 길다는 것만으로 이해 부족이라고 판단하지 않는다.
 - 다시 푼 문항이 있으면 처음과 비교해 달라진 점을 strengths 나 overview 에 쓴다.
 - 학생을 부를 때는 '학생'이라고만 쓴다.
@@ -244,7 +279,8 @@ ${
 - 반드시 JSON 하나만 출력한다.`;
 
   const user = `[오류 유형 집계] ${tallyText}
-[다시 푼 문항] ${retriedText}
+[다시 푼 문항] ${retriedText}${highSchool ? `
+[중학 기초 테마 집계] ${foundationText}` : ""}
 [요약 지표] 제출 ${stats.submitted}문항, 판정된 문항 정답률 ${stats.accuracy ?? "-"}%, 반복 오류 ${stats.repeatedError ? `${typeName(stats.repeatedError)} ${stats.repeatedCount}회` : "없음"}, 확인 필요 ${stats.reviewCount}개
 
 [풀이 기록 (오래된 순)]
@@ -288,6 +324,21 @@ ${records}
       ...handwritingCaution(subs, problems),
       ...skippedStepsCaution(subs, problems),
     ].slice(0, 6),
+    ...(highSchool
+      ? {
+          foundations: foundations.map((f) => ({
+            no: f.theme.no,
+            name: f.theme.name,
+            covers: f.theme.covers,
+            count: f.n,
+            problems: f.problems.size,
+            examples: [...new Set(f.subs.map((s) => (problems.get(s.problemId)?.question ?? s.question ?? "").replace(/\s+/g, " ").trim()))]
+              .filter(Boolean)
+              .slice(0, 2)
+              .map((q) => (q.length > 40 ? `${q.slice(0, 40)}…` : q)),
+          })),
+        }
+      : {}),
   };
   return summary;
 }
