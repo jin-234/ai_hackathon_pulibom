@@ -1,5 +1,5 @@
 import type { Analysis, ErrorType, Problem } from "./types";
-import { ERROR_LABEL, LOW_OCR_CONFIDENCE, variableOf } from "./types";
+import { ERROR_LABEL, LOW_OCR_CONFIDENCE, asErrorType, variableOf } from "./types";
 
 export { variableOf };
 import { env } from "./env";
@@ -168,7 +168,9 @@ const LOOKALIKE: Record<string, string> = {
 
 // 학년별로 풀이에 나오는 내용 (OCR 보정이 낯선 기호를 엉뚱하게 고치지 않게)
 const OCR_CONTENT = (grade?: number | null) =>
-  (grade ?? 1) >= 4
+  (grade ?? 1) >= 5
+    ? "고등학교 2학년 수학 풀이다: 지수·로그(2^x, log_2 8, log 2), 삼각함수(sin x, cos θ, tan, π, θ 는 각), 수열(a_n, S_n, Σ), 극한(lim, →, ∞), 다항함수의 미분·적분(f'(x), ∫, dx), 순열·조합·중복조합(5P2, 5C2, 3H2), 확률(P(A), P(B|A)), 정규분포(N(m, σ^2), Z)."
+    : (grade ?? 1) >= 4
     ? "고등학교 1학년 수학 풀이다: 다항식의 연산·인수분해(x^2, (x+1)(x-2)), 복소수(i 는 허수단위일 수 있다), 이차방정식·부등식(<, ≤), 순열·조합(5P2, 5C2), 집합({1,2}), 함수 f(x), 도형의 방정식."
     : "중학교 수학 풀이다: 일차방정식, 정수·분수 계산, 문자식 간단히 하기, □ 구하기, 거듭제곱·제곱근.";
 
@@ -359,7 +361,7 @@ export async function analyzeSolution(input: {
   ocrMarks?: { line: number | null; kind: "cancel" | "strike" }[]; // 획에서 찾은 빗금 (약분 표시 · 줄을 그어 지운 흔적)
   durationSec: number;
   erases: number;
-  grade?: number | null; // 학생 반의 학년 (1~3 중학교, 4 고1). 프롬프트의 학년·OCR 보정 내용에 쓴다
+  grade?: number | null; // 학생 반의 학년 (1~3 중학교, 4 고1, 5 고2). 프롬프트의 학년·OCR 보정 내용에 쓴다
 }): Promise<Analysis> {
   const { problem, ocrLines, durationSec, erases } = input;
   // 미지수 글자와 방정식 문항인지 (문장제는 정답이 'x=…' 인 것): 방정식이면 x 가 빠진 줄을 되돌릴 수 있다
@@ -453,7 +455,7 @@ ${ocrLines.length ? `[학생이 답으로 쓴 마지막 줄] ${correctedLines[oc
   const json = text.match(/\{[\s\S]*\}/)?.[0];
   if (!json) throw new Error(`분석 결과에서 JSON을 찾지 못함: ${text.slice(0, 200)}`);
   const parsed = JSON.parse(json) as Partial<Analysis>;
-  const errorType = (parsed.errorType && parsed.errorType in ERROR_LABEL ? parsed.errorType : "UNREADABLE") as ErrorType;
+  const errorType: ErrorType = asErrorType(parsed.errorType) ?? "UNREADABLE";
   const firstErrorLine = typeof parsed.firstErrorLine === "number" ? parsed.firstErrorLine : null;
   return {
     correctedLines,
