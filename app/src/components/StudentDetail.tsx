@@ -491,12 +491,12 @@ export function SubmissionCard({
     <div className="@container">
     <div className="grid gap-4 @2xl:grid-cols-2">
       <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <QuestionText text={s.question ?? problem?.question ?? ""} className="font-semibold" />
+        <div className="flex items-start gap-2">
+          <QuestionText text={s.question ?? problem?.question ?? ""} className="min-w-0 flex-1 font-semibold" />
           {confirmed && s.status !== "pending" ? (
-            <span className="rounded-full bg-sage px-2 py-0.5 text-xs text-white">✓ 확인함</span>
+            <span className="mt-0.5 shrink-0 whitespace-nowrap rounded-full bg-sage px-2 py-0.5 text-xs text-white">✓ 확인함</span>
           ) : (
-            <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS[s.status].cls}`}>{STATUS[s.status].label}</span>
+            <span className={`mt-0.5 shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs ${STATUS[s.status].cls}`}>{STATUS[s.status].label}</span>
           )}
           {s.status !== "pending" && !s.readOnly && (
             <button
@@ -504,7 +504,7 @@ export function SubmissionCard({
                 await fetch(`/api/submissions/${s.id}/reanalyze`, { method: "POST" });
                 onUpdate({ ...s, status: "pending", analysis: undefined, ocrLines: [] });
               }}
-              className="ml-auto rounded-full border border-line px-3 py-1 text-xs text-muted hover:bg-sand"
+              className="shrink-0 whitespace-nowrap rounded-full border border-line px-3 py-1 text-xs text-muted hover:bg-sand"
             >
               ↻ 다시
             </button>
