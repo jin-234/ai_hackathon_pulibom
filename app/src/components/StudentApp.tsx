@@ -1,11 +1,11 @@
 "use client";
 import FigureView from "@/components/FigureView";
-import QuestionText from "@/components/QuestionText";
+import QuestionText, { splitChoices } from "@/components/QuestionText";
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import AnswerField from "@/components/AnswerField";
+import AnswerField, { ChoiceField } from "@/components/AnswerField";
 import Chick from "@/components/Chick";
 import InkCanvas, { INK_COLORS, InkToolPill, type InkCanvasHandle, type InkTool } from "@/components/InkCanvas";
 import { ERROR_LABEL, formatDue, type AnalysisStatus, type ErrorType, type InkEvent, type Problem, type Stroke } from "@/lib/types";
@@ -105,6 +105,8 @@ export default function StudentApp({
   const draftAtKey = (problemId: string) => `pulibom:draft-at:${studentId}:${problemId}`;
   const twoPane = twoPaneOf[problem.id] ?? true;
   const figure = problem.figure;
+  // 객관식이면 답안 칸 대신 보기 번호를 골라 답한다
+  const choices = splitChoices(problem.question).choices;
   // 자동 저장: 쓰는 중인 풀이를 이 기기에 저장해서, 앱을 껐다 켜도 이어서 쓸 수 있게 (제출하면 지운다)
   const draftKey = (problemId: string) => `pulibom:draft:${studentId}:${problemId}`;
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -625,7 +627,11 @@ export default function StudentApp({
             <div className="flex flex-wrap items-center gap-3">
               <InkToolPill tool={tool} setTool={setTool} color={color} setColor={setColor} thick={thick} setThick={setThick} />
               <div className="flex min-w-[22rem] flex-1 items-center gap-3">
-                <AnswerField problemId={problem.id} value={answer} onChange={saveAnswer} onSubmit={() => !sending && submit()} disabled={sending || closed} />
+                {choices.length ? (
+                  <ChoiceField choices={choices} value={answer} onChange={saveAnswer} disabled={sending || closed} />
+                ) : (
+                  <AnswerField problemId={problem.id} value={answer} onChange={saveAnswer} onSubmit={() => !sending && submit()} disabled={sending || closed} />
+                )}
                 <button
                   onClick={submit}
                   disabled={sending || closed}
