@@ -1,6 +1,6 @@
 import { solveLinear, type Solved } from "./equation";
 import { sanitizeFigure } from "./figure";
-import { asFormat, choiceMark, splitChoices } from "./problemFormat";
+import { asFormat, pickChoices, splitChoices } from "./problemFormat";
 import { variableOf, type Problem } from "./types";
 
 export type QuestionInput = { question: string; answer?: string; solution?: string; concept?: string; templateId?: string; figure?: unknown; format?: unknown };
@@ -25,13 +25,12 @@ export function buildProblems(questions: QuestionInput[]): Omit<Problem, "id">[]
       if (q.figure && !fig.figure) throw new Error(`${i + 1}번 문항 그림: ${fig.problem ?? "그릴 수 없어요"}`);
       const figure = fig.figure ? { figure: fig.figure } : {};
       const format = asFormat(q.format);
-      // 객관식: 보기 2개 이상 + 정답은 그 보기 중 하나. 정답은 "③ 보기 내용" 꼴로 맞춰 저장한다 (풀이기로 풀지 않음)
+      // 객관식: 보기 2개 이상 + 정답은 그 보기 중 하나 이상. 정답은 "③ 보기 내용" (여러 개면 "② …, ④ …") 꼴로 맞춰 저장한다 (풀이기로 풀지 않음)
       if (format === "choice") {
         const { stem, choices } = splitChoices(q.question.trim());
         if (!stem.trim()) throw new Error(`${i + 1}번 문항: 객관식 문제 글을 입력해 주세요.`);
         if (choices.length < 2) throw new Error(`${i + 1}번 문항: 객관식 보기를 두 개 이상 넣어 주세요.`);
-        const mark = choiceMark(q.answer);
-        const picked = mark ? choices.find((c) => c.startsWith(mark)) : undefined;
+        const picked = pickChoices(q.answer, choices);
         if (!picked) throw new Error(`${i + 1}번 문항: 객관식 정답 보기를 골라 주세요.`);
         return {
           title: `${i + 1}번 문항`,

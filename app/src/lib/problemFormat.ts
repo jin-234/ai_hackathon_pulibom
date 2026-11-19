@@ -40,6 +40,23 @@ export const choiceBody = (c: string) => c.replace(/^[①-⑩]\s*/, "");
 // 정답 글에서 보기 번호 (없으면 null)
 export const choiceMark = (answer: string | null | undefined) => answer?.trim().match(/^[①-⑩]/)?.[0] ?? null;
 
+// 정답 글에 나온 보기 번호 모두 (번호 순, 중복 없이). 정답이 여러 개인 객관식: "② 3, ④ 5" · "②, ④" → ["②", "④"]
+export function choiceMarks(answer: string | null | undefined): string[] {
+  const found = new Set(answer?.match(/[①-⑩]/g) ?? []);
+  return CHOICE_MARKS.filter((m) => found.has(m));
+}
+
+// 정답 번호들 → 저장할 정답 ("② 보기 내용, ④ 보기 내용"). 보기에 없는 번호가 있거나 번호가 없으면 null
+export function pickChoices(answer: string | null | undefined, choices: string[]): string | null {
+  const marks = choiceMarks(answer);
+  const picked = marks.map((m) => choices.find((c) => c.startsWith(m)));
+  return marks.length && picked.every(Boolean) ? picked.join(", ") : null;
+}
+
+// 정답이 둘 이상인 객관식 (학생 화면에서 보기를 여러 개 고를 수 있다)
+export const isMultiAnswer = (p: { question: string; answer: string; format?: ProblemFormat }) =>
+  formatOf(p) === "choice" && choiceMarks(p.answer).length >= 2;
+
 export function formatOf(p: { question: string; format?: ProblemFormat }): ProblemFormat {
   return p.format ?? (splitChoices(p.question).choices.length >= 2 ? "choice" : "essay");
 }

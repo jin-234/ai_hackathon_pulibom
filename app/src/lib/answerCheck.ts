@@ -4,6 +4,7 @@
 // - "3/4" ↔ "0.75" 처럼 값이 같으면 정답
 // - "96" ↔ "96 cm²" 처럼 단위만 빠져도 정답
 // 답안 칸이 비었거나 문항에 정답이 없으면 비교할 수 없어 null
+import { choiceMarks } from "./problemFormat";
 
 const UNIT = /(?:cm|mm|km|kg|ml|m|g|l|개|원|명|초|분|시간|도|°|점|살|권|장|번|%)(?:\^?[23²³])?$/;
 
@@ -40,10 +41,13 @@ const CHOICE = /^[①-⑩]/;
 
 export function checkAnswer(answerText: string | null | undefined, expected: string | null | undefined): boolean | null {
   if (!answerText?.trim() || !expected?.trim()) return null;
-  // 객관식: 정답이 "③ (x - 2)(x + 2)" 처럼 번호로 시작하면 번호만 비교 ("③", "③ (x-2)(x+2)" 모두 정답)
-  const ce = expected.trim().match(CHOICE)?.[0];
-  const ca = answerText.trim().match(CHOICE)?.[0];
-  if (ce && ca) return ce === ca;
+  // 객관식: 정답이 "③ (x - 2)(x + 2)" 처럼 번호로 시작하면 번호만 비교 ("③", "③ (x-2)(x+2)" 모두 정답).
+  //  정답이 여러 개("② …, ④ …")면 고른 번호들이 정답 번호들과 똑같아야 정답 (하나라도 빠지거나 더 고르면 오답)
+  if (CHOICE.test(expected.trim()) && CHOICE.test(answerText.trim())) {
+    const ce = choiceMarks(expected);
+    const ca = choiceMarks(answerText);
+    return ce.length === ca.length && ce.every((m) => ca.includes(m));
+  }
   // 답이 여러 개 (근이 두 개 등): 값의 집합으로 비교 — 개수와 값이 모두 같아야 정답, 순서는 상관없음
   const ma = answers(answerText);
   const mb = answers(expected);
