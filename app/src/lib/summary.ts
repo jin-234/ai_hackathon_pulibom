@@ -2,19 +2,21 @@ import { chat, ERROR_GUIDE, SURVEY_RESPONDENTS, TEACHER_PICKS } from "./ai";
 import { listAssignments } from "./assignments";
 import { statsForStudent } from "./classStats";
 import { getStudent, getStudentGrade } from "./roster";
+import { conceptLabel, lessonOf } from "./concepts";
 import { gradeName } from "./curriculum";
-import { FOUNDATION_SOURCE, foundationOf, themeLabel, type FoundationTheme } from "./foundations";
+import { FOUNDATION_SOURCE, NOT_FOUNDATION, foundationOf, themeLabel } from "./foundations";
 import { PROBLEMS } from "./problems";
 import { listSubmissions } from "./store";
 import { ERROR_LABEL, handwritingIssue, hasHandwritingIssue, inkStats, type ErrorType, type Problem, type StudentSummary, type Submission, type WeakProof } from "./types";
 import { env } from "./env";
+import { correctOf } from "./verdict";
 import { query } from "./db";
 
 // 학생별 AI 학습 요약 (Solar Pro 4, 나중에 다른 모델로 교체 가능)
 // 학생 이름 등 식별정보는 보내지 않는다.
 const MAX_SUBMISSIONS = 30;
 // 요약 프롬프트를 바꾸면 올린다 (예전 프롬프트로 만든 요약은 '새로 요약 필요'로 보이게)
-const PROMPT_VERSION = "11";
+const PROMPT_VERSION = "12"; // 12: 이전 학년 기초를 전 학년 개념 목록(errorLessonId)으로
 // AI 에 넘기는 실수 유형 이름: 교사 설문에 있는 유형은 그 이름으로 (요약이 같은 이름으로 부르게)
 const typeName = (t: ErrorType) => TEACHER_PICKS.find((p) => p.type === t)?.name ?? ERROR_LABEL[t];
 
@@ -57,7 +59,10 @@ function wrongLineOf(s: Submission): { wrongLine: string; prevLine?: string } | 
   return { wrongLine: lines[i], ...(i > 0 && lines[i - 1] ? { prevLine: lines[i - 1] } : {}) };
 }
 
-function describe(s: Submission, p: Problem, attemptNo: number, no: number, foundation: FoundationTheme | null) {
+// 다시 볼 이전 학년 기초 하나 (소단원, 또는 예전 채점이면 중학 기초 테마)
+type Gap = { key: string; grade: number | null; label: string; covers: string };
+
+function describe(s: Submission, p: Problem, attemptNo: number, no: number, gap: Gap | null) {
   const a = s.analysis;
   const err = s.teacher?.errorType ?? a?.errorType;
   const lines = linesOf(s).join(" / ") || "(인식 실패)";
@@ -79,7 +84,7 @@ function describe(s: Submission, p: Problem, attemptNo: number, no: number, foun
       ? `  ✎ 글씨체 문제: ${handwritingIssue(s).nothingRead ? "OCR 이 이 풀이를 하나도 읽지 못했다" : `OCR 이 이 풀이의 ${handwritingIssue(s).lines.length}줄을 이상하게 읽었다 (인식이 틀렸을 수 있다)`}`
       : "",
     skippedSteps(s) ? `  ⤳ 중간 과정 없이 답만 씀` : "",
-    foundation ? `  다시 볼 중학 기초: ${themeLabel(foundation)}` : "",
+    gap ? `  다시 볼 이전 학년 기초: ${gap.label}` : "",
     s.teacher?.memo ? `  교사 관찰 메모: ${s.teacher.memo}` : "",
     `  풀이 시간 ${st.durationSec}초, 지운 횟수 ${st.erases}회`,
   ]
@@ -131,17 +136,27 @@ export async function summarize(input: {
   problems: Map<string, Problem>;
   subs: Submission[];
   fingerprint: string;
-  grade?: number | null; // 4 이상(고등학생)이면 틀린 풀이를 중학 기초 테마로 묶는다
+  grade?: number | null; // 학생 학년 (1~3 중학교, 4 고1, 5 고2). 틀린 단계가 이보다 낮은 학년 소단원이면 '이전 학년 기초'로 묶는다
 }): Promise<StudentSummary> {
   const { studentId, problems, subs, fingerprint } = input;
   const grade = input.grade ?? null;
   const highSchool = (grade ?? 0) >= 4;
-  // 고등학생의 틀린 풀이 → 다시 볼 중학 기초 테마 (오류 유형이 먼저, 안 되면 문항 개념·문제 글로)
+  // 틀린 풀이 → 다시 볼 이전 학년 기초
+  //  새 채점: AI 가 전 학년 개념 목록에서 고른 '틀린 단계의 소단원'이 학생 학년보다 낮으면 그 소단원 (학년마다 연결표가 필요 없다)
+  //  예전 채점(errorLessonId 없음): 고등학생만 예전처럼 중학 기초 테마 (오류 유형 → 문항 개념·문제 글)
   const errOf = (s: Submission) => s.teacher?.errorType ?? s.analysis?.errorType;
-  const foundationFor = (s: Submission) => {
-    if (!highSchool || (s.analysis?.correct !== false && !s.teacher?.errorType)) return null;
+  const gapFor = (s: Submission): Gap | null => {
+    const err = errOf(s);
+    if (correctOf(s) !== false || !err || NOT_FOUNDATION.includes(err)) return null;
+    const lessonId = s.analysis?.errorLessonId;
+    if (lessonId !== undefined) {
+      const l = lessonOf(lessonId);
+      return l && grade && l.grade < grade ? { key: l.id, grade: l.grade, label: conceptLabel(l), covers: l.desc } : null;
+    }
+    if (!highSchool) return null;
     const p = problems.get(s.problemId);
-    return foundationOf(errOf(s), [p?.concept, s.analysis?.concept, p?.question ?? s.question].filter(Boolean).join(" "), s.analysis?.errorConcept);
+    const f = foundationOf(err, [p?.concept, s.analysis?.concept, p?.question ?? s.question].filter(Boolean).join(" "), s.analysis?.errorConcept);
+    return f ? { key: `theme-${f.no}`, grade: null, label: `중학 ${themeLabel(f)}`, covers: f.covers } : null;
   };
   const stats = statsForStudent(studentId, input.name, [...new Set(subs.map((s) => s.problemId))].map((id) => problems.get(id)!), subs);
   const attempt = new Map<string, number>();
@@ -149,13 +164,13 @@ export async function summarize(input: {
     .map((s) => {
       const n = (attempt.get(s.problemId) ?? 0) + 1;
       attempt.set(s.problemId, n);
-      return describe(s, problems.get(s.problemId)!, n, subs.indexOf(s) + 1, foundationFor(s));
+      return describe(s, problems.get(s.problemId)!, n, subs.indexOf(s) + 1, gapFor(s));
     })
     .join("\n");
 
   // 오류 유형 집계: 교사가 확인한 유형 우선, 판독이 어렵고 교사가 아직 확인하지 않은 풀이는 뺀다
   const tally = new Map<string, { n: number; problems: Set<string>; subs: Submission[] }>();
-  const foundationTally = new Map<number, { theme: FoundationTheme; n: number; problems: Set<string>; subs: Submission[] }>();
+  const gapTally = new Map<string, { gap: Gap; n: number; problems: Set<string>; subs: Submission[] }>();
   for (const s of subs) {
     const err = s.teacher?.errorType ?? s.analysis?.errorType;
     if (!err || err === "NONE" || err === "UNREADABLE") continue;
@@ -165,20 +180,25 @@ export async function summarize(input: {
     t.subs.push(s);
     t.problems.add(s.problemId);
     tally.set(err, t);
-    const f = foundationFor(s);
-    if (f) {
-      const ft = foundationTally.get(f.no) ?? { theme: f, n: 0, problems: new Set<string>(), subs: [] };
-      ft.n++;
-      ft.problems.add(s.problemId);
-      ft.subs.push(s);
-      foundationTally.set(f.no, ft);
+    const g = gapFor(s);
+    if (g) {
+      const gt = gapTally.get(g.key) ?? { gap: g, n: 0, problems: new Set<string>(), subs: [] };
+      gt.n++;
+      gt.problems.add(s.problemId);
+      gt.subs.push(s);
+      gapTally.set(g.key, gt);
     }
   }
-  // 많이 나온 테마부터 (같으면 서로 다른 문항이 많은 것, 그다음 테마 번호 순)
-  const foundations = [...foundationTally.values()].sort((a, b) => b.n - a.n || b.problems.size - a.problems.size || a.theme.no - b.theme.no);
-  const foundationText = foundations.length
-    ? foundations.map((f) => `${themeLabel(f.theme)} ${f.n}회, 서로 다른 문항 ${f.problems.size}개 [풀이 ${f.subs.map((s) => subs.indexOf(s) + 1).join(", ")}]`).join(", ")
+  // 많이 나온 것부터 (같으면 서로 다른 문항이 많은 것, 그다음 낮은 학년·목록 순)
+  const gaps = [...gapTally.values()].sort(
+    // 예전 채점의 중학 테마(grade null)는 같은 횟수면 새 소단원 뒤에
+    (a, b) => b.n - a.n || b.problems.size - a.problems.size || (a.gap.grade ?? 99) - (b.gap.grade ?? 99) || a.gap.key.localeCompare(b.gap.key, undefined, { numeric: true }),
+  );
+  const gapText = gaps.length
+    ? gaps.map((g) => `${g.gap.label} ${g.n}회, 서로 다른 문항 ${g.problems.size}개 [풀이 ${g.subs.map((s) => subs.indexOf(s) + 1).join(", ")}]`).join(", ")
     : "없음";
+  // 이전 학년이 있는 학생 (중2 이상)이면 이전 학년 기초 이야기를 한다
+  const showGaps = (grade ?? 0) >= 2 || gaps.length > 0;
   // 횟수가 같으면 교사 설문에서 많이 꼽힌 유형을 먼저 (설문에 없는 유형은 뒤)
   const pickRank = (type: string) => {
     const i = TEACHER_PICKS.findIndex((p) => p.type === type);
@@ -264,11 +284,11 @@ ${
 - ⤳ 중간 과정 없이 답만 씀 표시도 수학 실수가 아니다. 약점으로 세지 않고, 과정 생략 이야기는 프로그램이 cautions 에 따로 넣으니 쓰지 않는다. 답만 쓰고 틀린 풀이로 어떤 실수인지 짐작하지 않는다.
 - COPY(옮겨 적기 실수)는 계산을 몰라서가 아니라 옮겨 적다 생긴 실수다. 개념 부족으로 쓰지 말고, practice 에는 문제를 옮겨 쓴 첫 줄과 마지막 답을 문제·앞 줄과 대조하는 습관을 쓴다.
 - 교사 관찰 메모와 교사가 확인한 오류 유형을 AI 판정보다 우선한다.${
-    highSchool
+    showGaps
       ? `
-- 이 학생은 고등학생이다. 고등 문제를 틀린 원인이 중학 기초에 있는지 본다. [중학 기초 테마 집계]는 틀린 풀이마다 다시 봐야 할 중학 기초(${FOUNDATION_SOURCE}의 THEME 01~10)를 프로그램이 정해 센 것이다.
-  ${foundations.length ? `서로 다른 문항 2개 이상에서 나온 테마가 있으면 overview 에 "중학 ○○ 기초가 비어 있어 보여요"처럼 한 번 쓰고, practice 첫 항목을 그 테마를 복습하는 연습으로 쓴다 (예: "THEME 02 문자와 식: 괄호 앞 음수가 있는 일차식 정리부터 다시 연습해요"). 한 문항에서만 나온 테마는 "확인이 필요해 보여요"로만 쓴다.` : "집계가 없으면 중학 기초 이야기를 쓰지 않는다."}
-  집계에 없는 테마를 짐작해서 쓰지 않는다.`
+- 이 학생 학년의 문제를 틀린 원인이 이전 학년 기초에 있는지 본다. [이전 학년 기초 집계]는 틀린 풀이마다 '처음 틀린 단계'가 학생 학년보다 낮은 학년의 어느 소단원인지 프로그램이 정해 센 것이다 (예: 고2 접선 문항인데 판별식 계산을 틀림 → 고1 이차방정식).${gaps.some((g) => g.gap.grade === null) ? ` '중학 THEME' 으로 적힌 것은 예전 채점이라 ${FOUNDATION_SOURCE}의 테마로 묶은 것이다.` : ""}
+  ${gaps.length ? `서로 다른 문항 2개 이상에서 나온 것이 있으면 overview 에 "고1 이차방정식 기초가 비어 있어 보여요"처럼 학년과 소단원 이름으로 한 번 쓰고, practice 첫 항목을 그 소단원을 복습하는 연습으로 쓴다 (예: "고1 이차방정식: 판별식으로 근의 개수를 따지는 문항부터 다시 연습해요"). 한 문항에서만 나온 것은 "확인이 필요해 보여요"로만 쓴다.` : "집계가 없으면 이전 학년 기초 이야기를 쓰지 않는다."}
+  집계에 없는 학년·소단원을 짐작해서 쓰지 않는다.`
       : ""
   }
 - 풀이 시간이 길다는 것만으로 이해 부족이라고 판단하지 않는다.
@@ -279,8 +299,8 @@ ${
 - 반드시 JSON 하나만 출력한다.`;
 
   const user = `[오류 유형 집계] ${tallyText}
-[다시 푼 문항] ${retriedText}${highSchool ? `
-[중학 기초 테마 집계] ${foundationText}` : ""}
+[다시 푼 문항] ${retriedText}${showGaps ? `
+[이전 학년 기초 집계] ${gapText}` : ""}
 [요약 지표] 제출 ${stats.submitted}문항, 판정된 문항 정답률 ${stats.accuracy ?? "-"}%, 반복 오류 ${stats.repeatedError ? `${typeName(stats.repeatedError)} ${stats.repeatedCount}회` : "없음"}, 확인 필요 ${stats.reviewCount}개
 
 [풀이 기록 (오래된 순)]
@@ -324,15 +344,13 @@ ${records}
       ...handwritingCaution(subs, problems),
       ...skippedStepsCaution(subs, problems),
     ].slice(0, 6),
-    ...(highSchool
+    ...(gaps.length
       ? {
-          foundations: foundations.map((f) => ({
-            no: f.theme.no,
-            name: f.theme.name,
-            covers: f.theme.covers,
-            count: f.n,
-            problems: f.problems.size,
-            examples: [...new Set(f.subs.map((s) => (problems.get(s.problemId)?.question ?? s.question ?? "").replace(/\s+/g, " ").trim()))]
+          gaps: gaps.map((g) => ({
+            ...g.gap,
+            count: g.n,
+            problems: g.problems.size,
+            examples: [...new Set(g.subs.map((s) => (problems.get(s.problemId)?.question ?? s.question ?? "").replace(/\s+/g, " ").trim()))]
               .filter(Boolean)
               .slice(0, 2)
               .map((q) => (q.length > 40 ? `${q.slice(0, 40)}…` : q)),

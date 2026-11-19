@@ -6,6 +6,7 @@ import { env } from "./env";
 import { linearForm, solveLinear } from "./equation";
 import { gradeName } from "./curriculum";
 import { describeFigure } from "./figure";
+import { asLessonId, conceptListText } from "./concepts";
 
 // AI 호출 모음. 모델은 .env 로 교체 가능하게 둔다.
 //   ANALYSIS_BASE_URL / ANALYSIS_MODEL / ANALYSIS_API_KEY 를 바꾸면
@@ -351,6 +352,15 @@ export const TEACHER_PICKS: { type: ErrorType; name: string; picked: number }[] 
   { type: "DISTRIBUTE", name: "괄호를 풀 때 일부 항에만 곱함", picked: 11 },
 ];
 const PICK_TYPES = new Set(TEACHER_PICKS.map((p) => p.type));
+// 개념이 아니라 공부 습관·판정 문제라 소단원을 붙이지 않는 유형
+const NO_LESSON: ErrorType[] = ["CONDITION", "TARGET", "COPY", "UNREADABLE", "NONE"];
+
+// 부호 계산 실수(SIGN)는 문항이 몇 학년이든 기초가 중1 정수·유리수 계산이다.
+// AI 가 틀린 단계 대신 문항 단원(예: 고2 미분)을 고르는 일이 있어서 코드로 맞춘다 (학년과 상관없는 규칙 하나)
+function lessonOfStep(errorType: ErrorType, picked: string | null, text: string): string | null {
+  if (errorType !== "SIGN" || picked?.startsWith("1-2-")) return picked;
+  return /곱|나눗|나누|거듭제곱|제곱|역수/.test(text) ? "1-2-3" : "1-2-2";
+}
 
 // ③ Solar Pro: 문제·정답·해설 + OCR 결과 → 풀이 읽기 → 오류 위치 → 채점 → 오류 유형 분류 (JSON)
 export async function analyzeSolution(input: {
@@ -409,6 +419,10 @@ ${codes}
 - 최종 답은 보통 마지막 줄에 있다 (예: 'x = 숫자', 계산 결과, 간단히 한 식). 답으로 볼 줄이 없거나 애매하면 recognizedAnswer=null, correct=null, needsReview=true 로 둔다.
 - firstErrorLine 은 위 줄 번호(0부터)다.
 - errorConcept 에는 처음 틀린 줄에서 학생이 하던 일의 수학 개념 이름을 짧게 쓴다. 문항 전체의 개념이 아니라 틀린 단계의 개념이다 (예: 이차방정식 문항에서 x^2 - x - 6 을 (x - 2)(x + 3) 으로 잘못 묶었으면 "인수분해", 다항식 문항에서 -(x - 1) 을 -x - 1 로 풀었으면 "괄호 풀기(분배법칙)", 일차방정식에서 이항할 때 틀렸으면 "등식의 성질과 이항"). 틀린 곳이 없으면 null.
+- errorLessonId 에는 처음 틀린 줄에서 학생이 하던 일이 아래 [개념 목록]의 어느 소단원 내용인지 하나를 골라 "id 소단원이름" 으로 쓴다 (예: "4-2-2 이차방정식"). id 와 이름은 목록의 같은 줄에서 그대로 옮긴다. 문항의 단원이 아니라 틀린 단계의 단원이다. 같은 내용이 여러 학년에 있으면 그 내용을 처음 배우는 학년의 소단원을 고른다 (desc 로 판단).
+  예: 고2 접선 문항에서 판별식 계산을 틀림 → 고1 이차방정식(판별식) 소단원. 극한 문항에서 분자 인수분해를 틀림 → 그 인수분해를 처음 배우는 소단원. 어느 문항이든 음수가 낀 덧셈·뺄셈을 틀림 → 중1 정수와 유리수의 계산 소단원. 로그 문항에서 로그의 성질을 틀림 → 고2 로그 소단원.
+  SIGN(부호 계산) 이면 문항 학년과 상관없이 중1 정수와 유리수의 덧셈·뺄셈 또는 곱셈·나눗셈 소단원이다.
+  정답이거나, 계산·개념이 아니라 조건을 놓침(CONDITION)·구하는 값 혼동(TARGET)·옮겨 적기(COPY)·판독 불가면 null. 목록에 없는 id 를 만들지 않는다.
 - 유형 고르기: 정답이고 과정에도 문제가 없으면 NONE. 풀이가 거의 읽히지 않으면 UNREADABLE. 두 유형이 겹치면 첫 오류 줄에서 먼저 일어난 실수를 고른다 (예: 이항하면서 부호를 안 바꿨으면 TRANSPOSE, 이항은 맞게 했는데 -3 - 5 를 -2 로 계산했으면 SIGN).
 - 'Ax = B' 에서 x 만 남기는 단계(계수 없애기)의 실수는 이항이 아니라 DIVIDE 다 (예: 6x = 18 → x = 18 - 6, 3x = 12 → x = 12 × 3).
 - x 항끼리 모으며 계수를 잘못 더하고 뺀 것(5x - x = 6x, 3x + 2x = 6x)은 LIKE_TERMS, 숫자끼리 더하다 음수 부호를 틀린 것(-8 + 5 = -13)은 SIGN 이다.
@@ -421,7 +435,10 @@ ${codes}
 - 중간 과정 없이 답만 쓰고 틀렸으면 어디서 틀렸는지 알 수 없다. 유형을 짐작해서 단정하지 말고 reason 에 "중간 과정이 없어 어디서 틀렸는지 확인할 수 없다"고 쓰고 needsReview=true.
 - 단위를 빠뜨리거나(cm² 대신 cm) 답의 형식을 지키지 않은 것은 값이 같으면 정답으로 두되 suggestion 에 적는다.
 - 식과 계산이 끝까지 맞는데 최종 답이 정답과 다르면 문제를 다시 읽는다: 주어진 조건(양수·자연수·범위 등)에 맞지 않는 값까지 답했으면 CONDITION, 묻는 값이 아닌 값을 답했으면 TARGET (x 만 구하고 문제가 묻는 x + 3 을 구하지 않음), 식 자체를 잘못 세웠으면 EXPR_MEANING. 이때 firstErrorLine 은 답을 쓴 마지막 줄이다.
-- 반드시 JSON 하나만 출력한다.`;
+- 반드시 JSON 하나만 출력한다.
+
+[개념 목록] (id 학년 단원 > 소단원: 학습 내용. 학생 학년까지)
+${conceptListText(input.grade)}`;
 
   const checks = checkLines(correctedLines, v, isEquation && !problem.free ? problem.question : undefined);
   const user = `[문제] ${problem.question}${problem.figure ? `\n[그림] ${describeFigure(problem.figure)}` : ""}
@@ -435,7 +452,7 @@ ${ocrLines.length ? ocrLines.map((l, i) => `${i}: ${correctedLines[i]}  /  ${l}$
 ${ocrLines.length ? `[학생이 답으로 쓴 마지막 줄] ${correctedLines[ocrLines.length - 1]}  (이 줄에 쓰인 값 전체가 학생의 답이다. 이 중 일부만 골라서 채점하지 않는다)\n` : ""}[풀이 시간] ${durationSec}초, [지운 횟수] ${erases}회 (참고용, 이것만으로 이해도를 판단하지 말 것)
 
 다음 형식의 JSON으로 답하라:
-{"recognizedAnswer": "풀이에서 찾은 최종 답 (예: x=4) 또는 null", "correct": true|false|null, "firstErrorLine": 줄번호 또는 null, "errorType": "4단계에서 고른 코드", "concept": "관련 개념", "errorConcept": "틀린 단계의 개념 또는 null", "reason": "어디서 무엇을 잘못했는지 (틀린 식 인용, 2문장 이내)", "suggestion": "교사가 학생에게 해볼 확인 질문 또는 보충 지도 방향 (2문장 이내)", "needsReview": true|false}`;
+{"recognizedAnswer": "풀이에서 찾은 최종 답 (예: x=4) 또는 null", "correct": true|false|null, "firstErrorLine": 줄번호 또는 null, "errorType": "4단계에서 고른 코드", "concept": "관련 개념", "errorConcept": "틀린 단계의 개념 또는 null", "errorLessonId": "틀린 단계의 소단원 'id 소단원이름' ([개념 목록]에서) 또는 null", "reason": "어디서 무엇을 잘못했는지 (틀린 식 인용, 2문장 이내)", "suggestion": "교사가 학생에게 해볼 확인 질문 또는 보충 지도 방향 (2문장 이내)", "needsReview": true|false}`;
 
   const res = await fetch(`${BASE_URL()}/chat/completions`, {
     method: "POST",
@@ -465,6 +482,8 @@ ${ocrLines.length ? `[학생이 답으로 쓴 마지막 줄] ${correctedLines[oc
     errorType,
     concept: parsed.concept || problem.concept,
     ...(typeof parsed.errorConcept === "string" && parsed.errorConcept.trim() && parsed.correct === false ? { errorConcept: parsed.errorConcept.trim().slice(0, 40) } : {}),
+    // 새 채점은 늘 값을 둔다 (null 포함): undefined 면 이 기능 전의 예전 채점 → 요약이 예전 방식(중학 기초 테마)으로 대신한다
+    errorLessonId: parsed.correct === false && !NO_LESSON.includes(errorType) ? lessonOfStep(errorType, asLessonId(parsed.errorLessonId, input.grade), `${parsed.errorConcept ?? ""} ${parsed.reason ?? ""}`) : null,
     reason: parsed.reason ?? "",
     suggestion: parsed.suggestion ?? "",
     needsReview:
