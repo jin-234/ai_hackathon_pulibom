@@ -1,5 +1,6 @@
 import { DEMO_CLASS, listAssignments } from "./assignments";
 import { classMembers, type ClassInfo } from "./classes";
+import { schoolStageOf } from "./concepts";
 import { PROBLEMS } from "./problems";
 import { listSubmissions } from "./store";
 import { correctOf } from "./verdict";
@@ -45,7 +46,7 @@ export function statsForStudent(
   name: string,
   problems: Problem[],
   subs: Submission[],
-  opts: { supplementImproved?: boolean } = {},
+  opts: { supplementImproved?: boolean; grade?: number | null } = {},
 ): StudentStats {
   const byProblem = new Map(problems.map((p) => [p.id, p]));
   const mine = subs.filter((s) => s.studentId === id && byProblem.has(s.problemId)).sort((a, b) => a.submittedAt - b.submittedAt);
@@ -118,6 +119,7 @@ export function statsForStudent(
       before: pct(c.firstOk, c.n)!,
       after: c.retried ? pct(c.lastOk, c.n) : null,
       n: c.n,
+      stage: schoolStageOf(concept, opts.grade),
     })),
   };
 }
@@ -159,7 +161,7 @@ export async function computeClassStats(cls: ClassInfo, assignmentId: string | n
       // 과제 단위 제출: 문항을 다 낸 과제 수
       const done = new Set(subs.filter((x) => x.studentId === s.id).map((x) => x.problemId));
       return {
-        ...statsForStudent(s.id, s.name, problems, subs, { supplementImproved: supplementImproved(assignments, s.id, subs) }),
+        ...statsForStudent(s.id, s.name, problems, subs, { supplementImproved: supplementImproved(assignments, s.id, subs), grade: cls.grade }),
         assignmentsDone: mine.filter((a) => a.problems.length > 0 && a.problems.every((p) => done.has(p.id))).length,
         assignmentsTotal: mine.length,
       };
