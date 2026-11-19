@@ -3,9 +3,15 @@
 import { useState } from "react";
 import { CountSelect } from "@/components/SupplementPanel";
 import { gradeLabel, lessonTitle, unitsOf, type Lesson } from "@/lib/curriculum";
-import type { UnitItem } from "@/lib/unitProblems";
+import type { QuestionType, UnitItem } from "@/lib/unitProblems";
+
+const TYPES: [QuestionType, string, string][] = [
+  ["written", "서술형", "풀이를 쓰고 답을 직접 써요"],
+  ["choice", "객관식", "보기 ①~⑤ 중 하나를 골라요"],
+];
 
 // 과제 출제: 반의 학년 교육과정 단원 목록 → 소단원을 고르면 과제 이름을 채우고, 문항은 문제은행 틀 또는 AI로 만든다 (직접 입력도 그대로 가능)
+//  문항 유형(서술형 / 객관식)을 고른다. 문제은행 틀은 서술형뿐이라 객관식은 AI로 만든다
 export function CurriculumPicker({
   classId,
   grade,
@@ -21,11 +27,13 @@ export function CurriculumPicker({
   const [unitId, setUnitId] = useState<string | null>(null);
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [count, setCount] = useState(5);
+  const [type, setType] = useState<QuestionType>("written");
   const [busy, setBusy] = useState<"bank" | "ai" | null>(null);
   const [error, setError] = useState("");
   const unit = units.find((u) => u.id === unitId) ?? null;
 
   if (!units.length) return null;
+  const bank = !!lesson?.templates?.length && type === "written"; // 문제은행으로 만들 수 있는지
 
   const pickLesson = (l: Lesson) => {
     if (!unit) return;
@@ -42,7 +50,7 @@ export function CurriculumPicker({
       const res = await fetch(`/api/classes/${classId}/unit-draft`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lessonId: lesson.id, count, mode }),
+        body: JSON.stringify({ lessonId: lesson.id, count, mode, type }),
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error);
@@ -102,9 +110,30 @@ export function CurriculumPicker({
       )}
 
       {lesson && (
+        <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="문항 유형">
+          <span className="text-xs text-muted">문항 유형</span>
+          {TYPES.map(([k, label, hint]) => (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={type === k}
+              title={hint}
+              onClick={() => setType(k)}
+              disabled={busy !== null}
+              className={`rounded-full px-3 py-1 text-xs disabled:opacity-40 ${type === k ? "bg-honey font-semibold text-ink" : "border border-line text-muted hover:bg-sand"}`}
+            >
+              {label}
+            </button>
+          ))}
+          <span className="text-[11px] text-muted">{TYPES.find(([k]) => k === type)![2]}</span>
+        </div>
+      )}
+
+      {lesson && (
         <div className="flex flex-wrap items-center gap-2">
           <CountSelect value={count} onChange={setCount} disabled={busy !== null} />
-          {lesson.templates?.length ? (
+          {bank ? (
             <button
               type="button"
               onClick={() => make("bank")}
@@ -118,12 +147,17 @@ export function CurriculumPicker({
             type="button"
             onClick={() => make("ai")}
             disabled={busy !== null}
-            className={`rounded-full px-3 py-1.5 text-xs disabled:opacity-40 ${lesson.templates?.length ? "border border-line text-muted hover:bg-sand" : "bg-honey font-semibold hover:bg-honey-deep"}`}
+            className={`rounded-full px-3 py-1.5 text-xs disabled:opacity-40 ${bank ? "border border-line text-muted hover:bg-sand" : "bg-honey font-semibold hover:bg-honey-deep"}`}
           >
             {busy === "ai" ? "AI가 만드는 중…" : "AI로 만들기"}
           </button>
           <span className="text-[11px] text-muted">
-            {lesson.templates?.length ? "문제은행은 정답을 자동으로 확인해요." : "AI 문항은 정답을 꼭 확인해 주세요."} 아래에 직접 입력해도 돼요.
+            {bank
+              ? "문제은행은 정답을 자동으로 확인해요."
+              : lesson.templates?.length && type === "choice"
+                ? "문제은행은 서술형만 있어서 객관식은 AI로 만들어요. 정답을 꼭 확인해 주세요."
+                : "AI 문항은 정답을 꼭 확인해 주세요."}{" "}
+            아래에 직접 입력해도 돼요.
           </span>
         </div>
       )}
