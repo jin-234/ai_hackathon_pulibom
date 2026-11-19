@@ -19,7 +19,7 @@ API 키는 **저장소 루트의 `.env`** 에서 읽습니다 (`../.env.example`
 | `npm run db:import` | 예전에 파일(`app/data/*.json`, `*.png`)로 저장하던 데이터를 DB로 옮김 (이미 옮긴 건 건너뜀) |
 | `npm run db:demo` | 시연 데이터 추가 (`db/demo/*.sql`, 여러 번 실행해도 안전). 학년도 이력(2025→2026), 소그룹 테스트용 풀이, 반복 학습 순환(s02), AI 요약 확인용 1학년 5반. `04_diagnostic.sql`은 예전 레벨 테스트 시연 데이터를 지우기만 함 |
 | `npm run test:weakness` | AI 채점·약점 요약 프롬프트 검사 (더미 학생 20명, 실제 Solar 호출). `-- 설문` 으로 설문 유형 학생만. 결과: 채점·오류 유형 88/88, 약점 20/20, 말투 20/20, 내용 규칙 20/20 |
-| `npm run test:ocr` | 필기 인식 검사: DB 의 실제 필기 획을 OCR(+ Mathpix → Claude 다시 읽기) → 정답 라벨(`data/ocrbench/labels.json`, git 제외)과 줄마다 비교. `-- --no-vision` 다시 읽기 끄기, `-- --vision=lines` 줄 단위 방식 |
+| `npm run test:ocr` | 필기 인식 검사: DB 의 실제 필기 획을 OCR(+ Claude 다시 읽기) → 정답 라벨(`data/ocrbench/labels.json`, git 제외)과 줄마다 비교. `-- --no-vision` 다시 읽기 끄기, `-- --vision=lines` 줄 단위 방식 |
 
 - Supabase 웹 API(Data API)로는 테이블에 접근하지 못하게 막아 뒀어요 (`db/init/04_security.sql`, RLS). 앱은 `DATABASE_URL` 로 직접 접속해요.
 - 인터넷이 끊기면 DB도 안 돼요. 로컬 PostgreSQL 주소를 `DATABASE_URL` 에 넣으면 같은 코드로 그대로 돌아가요 (`npm run db:setup` 부터).
@@ -76,7 +76,7 @@ API 키는 **저장소 루트의 `.env`** 에서 읽습니다 (`../.env.example`
 
 ## 흐름
 
-제출 → `POST /api/submissions` → 필기 PNG·획 로그 저장 → **업스테이지 OCR**(획을 다시 그린 OCR 전용 이미지, 확신 없는 줄이 있으면 **Mathpix → Claude** 가 다시 읽음, 빗금·지운 흔적은 획에서 찾아 뺌) → **Solar 보정**(문항의 미지수에 맞춰 비슷한 글자 고치기) → **Solar Pro 채점**(코드 검산 + 빗금 표시) → 교사 화면에 반영
+제출 → `POST /api/submissions` → 필기 PNG·획 로그 저장 → **업스테이지 OCR**(획을 다시 그린 OCR 전용 이미지, 확신 없는 줄이 있으면 **Claude** 가 다시 읽음, 빗금·지운 흔적은 획에서 찾아 뺌) → **Solar 보정**(문항의 미지수에 맞춰 비슷한 글자 고치기) → **Solar Pro 채점**(코드 검산 + 빗금 표시) → 교사 화면에 반영
 (분석 중 / 분석 완료 / 확인 필요 / 오류 상태 표시, OCR 이 이상하게 읽은 풀이는 `✎ 글씨체`)
 
 **채점·약점 분석** (`src/lib/pipeline.ts` → `ai.ts` → `summary.ts`)
@@ -124,8 +124,8 @@ OCR 전용 이미지  두 획으로 쓴 x(ɔc·ㄱL)를 반듯한 X 로 다시 �
 |---|---|
 | `src/components/InkCanvas.tsx` | 필기 캔버스, 획 좌표·시간·삭제 이벤트 기록 |
 | `src/lib/ai.ts` | OCR 호출·보정(`correctOcr`), 채점 프롬프트(`analyzeSolution`, 오류 유형 기준 `ERROR_GUIDE`·설문 `TEACHER_PICKS`), 코드 검산 힌트(`checkLines`) (모델은 `.env` 로 교체) |
-| `src/lib/ocrImage.ts` | OCR 전용 이미지: 저장된 획을 다시 그려 인식률을 높임 (`sharp`), 두 획 x 를 반듯하게 다시 그리기. OCR 뒤 확신 없는 줄이 있으면 Mathpix → Claude 다시 읽기, 근거 이미지용 줄 위치(`lineBoxesOf`) |
-| `src/lib/vision.ts` | OCR 다시 읽기: 확신 없는 줄 고르기(`suspectLines`), 이미지 전체 다시 읽기(`readWhole`: Mathpix(키 있을 때) → Claude) / 줄만 잘라 다시 읽기(`rereadLines`, Claude). 모두 실패하면 OCR 결과 그대로 |
+| `src/lib/ocrImage.ts` | OCR 전용 이미지: 저장된 획을 다시 그려 인식률을 높임 (`sharp`), 두 획 x 를 반듯하게 다시 그리기. OCR 뒤 확신 없는 줄이 있으면 Claude 다시 읽기, 근거 이미지용 줄 위치(`lineBoxesOf`) |
+| `src/lib/vision.ts` | OCR 다시 읽기: 확신 없는 줄 고르기(`suspectLines`), 이미지 전체 다시 읽기(`readWhole`: Claude) / 줄만 잘라 다시 읽기(`rereadLines`, Claude). 모두 실패하면 OCR 결과 그대로 |
 | `src/lib/claudeCli.ts` | Claude Code 헤드리스 호출(`claude -p --output-format json`, 구독 사용, `ANTHROPIC_API_KEY` 제거, MCP·세션 저장 끔, 180초). 이미지는 임시 폴더 파일 + Read 도구만 허용 |
 | `src/lib/pipeline.ts` | 제출 → OCR → 채점 흐름 (문항 미지수를 OCR·보정에 넘김) |
 | `src/lib/types.ts` | 공용 타입·오류 유형 이름, 미지수 찾기(`variableOf`), 글씨체 문제 판정(`handwritingIssue`) |
