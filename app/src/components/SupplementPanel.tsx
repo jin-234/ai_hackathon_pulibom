@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { FigureEditor } from "@/components/FigureEditor";
 import { solveLinear } from "@/lib/equation";
 import type { SupplementCandidate, SupplementDraft, SupplementProgress } from "@/lib/supplement";
 import { ERROR_LABEL, formatDue } from "@/lib/types";
@@ -62,6 +63,7 @@ export const toQuestion = (r: SupplementCandidate) => ({
   question: r.question,
   ...(r.templateId ? { concept: r.concept, templateId: r.templateId } : {}),
   ...(r.calc ? { answer: r.answer, concept: r.concept } : {}),
+  ...(r.figure ? { figure: r.figure } : {}),
 });
 
 // 보충 지도: AI가 보충 문항을 만들고 → 교사가 확인·수정해 이 학생에게 배정 → 재풀이 → 전후 비교·AI 변화 분석
@@ -244,6 +246,9 @@ export default function SupplementPanel({ studentId, openSignal }: { studentId: 
                     >
                       ✕
                     </button>
+                  </div>
+                  <div className="mt-1.5 pl-8">
+                    <FigureEditor figure={r.figure} onChange={(figure) => setRows((rs) => rs.map((x) => (x.key === r.key ? { ...x, figure } : x)))} />
                   </div>
                   <div className="mt-1.5 pl-8 text-xs">
                     {c.ok ? (
