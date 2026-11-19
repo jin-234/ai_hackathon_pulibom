@@ -1,7 +1,7 @@
 "use client";
 import FigureView from "@/components/FigureView";
 import QuestionText from "@/components/QuestionText";
-import { FORMAT_LABEL, formatOf, splitChoices } from "@/lib/problemFormat";
+import { FORMAT_LABEL, formatOf, isMultiAnswer, splitChoices } from "@/lib/problemFormat";
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -113,6 +113,7 @@ export default function StudentApp({
   const format = formatOf(problem);
   const choices = format === "choice" ? splitChoices(problem.question).choices : [];
   const isChoice = choices.length > 0;
+  const multiAnswer = isChoice && isMultiAnswer(problem); // 정답이 여러 개: 보기를 모두 고른다
   // 자동 저장: 쓰는 중인 풀이를 이 기기에 저장해서, 앱을 껐다 켜도 이어서 쓸 수 있게 (제출하면 지운다)
   const draftKey = (problemId: string) => `pulibom:draft:${studentId}:${problemId}`;
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -492,7 +493,7 @@ export default function StudentApp({
                 <div className="w-fit rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold tracking-[0.12em] text-muted">
                   QUESTION {String(idx + 1).padStart(2, "0")}
                 </div>
-                <FormatBadge format={format} />
+                <FormatBadge format={format} multi={multiAnswer} />
               </div>
               <h1 className="text-2xl font-extrabold">채점 결과를 볼까요?</h1>
             </div>
@@ -554,7 +555,7 @@ export default function StudentApp({
                 <div className="w-fit rounded-full border border-line px-3 py-0.5 text-[11px] font-bold tracking-[0.14em] text-olive">
                   QUESTION {String(idx + 1).padStart(2, "0")}
                 </div>
-                <FormatBadge format={format} />
+                <FormatBadge format={format} multi={multiAnswer} />
               </div>
               <div
                 className={`max-h-[15dvh] min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words rounded-[1.25rem] border border-line bg-paper px-4 py-2.5 ${
@@ -625,7 +626,7 @@ export default function StudentApp({
                             <span className="w-fit rounded-full border border-line bg-paper px-2.5 py-0.5 text-[10px] font-bold tracking-[0.14em] text-olive">
                               QUESTION {String(idx + 1).padStart(2, "0")}
                             </span>
-                            <FormatBadge format={format} />
+                            <FormatBadge format={format} multi={multiAnswer} />
                           </span>
                           <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-ink">
                             <QuestionText text={problem.question} />
@@ -665,7 +666,7 @@ export default function StudentApp({
               <InkToolPill tool={tool} setTool={setTool} color={color} setColor={setColor} thick={thick} setThick={setThick} />
               <div className="flex min-w-[22rem] flex-1 items-center gap-3">
                 {isChoice ? (
-                  <ChoiceField choices={choices} value={answer} onChange={saveAnswer} disabled={sending || closed} />
+                  <ChoiceField choices={choices} value={answer} onChange={saveAnswer} disabled={sending || closed} multiple={multiAnswer} />
                 ) : (
                   <AnswerField problemId={problem.id} value={answer} onChange={saveAnswer} onSubmit={() => void submit()} disabled={closed} flushRef={answerFlush} />
                 )}
@@ -690,13 +691,14 @@ export default function StudentApp({
 }
 
 // 문항 유형 표시 (객관식: 보기를 고르기 / 서술형: 풀이를 쓰고 답 적기)
-function FormatBadge({ format }: { format: ReturnType<typeof formatOf> }) {
+function FormatBadge({ format, multi }: { format: ReturnType<typeof formatOf>; multi?: boolean }) {
   return (
     <span
       className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${format === "choice" ? "bg-honey-soft text-olive" : "bg-sage-soft text-[#5d7a50]"}`}
-      title={format === "choice" ? "보기 중에서 답을 골라요" : "풀이를 쓰고 답을 적어요"}
+      title={multi ? "정답이 여러 개예요. 맞는 보기를 모두 골라요" : format === "choice" ? "보기 중에서 답을 골라요" : "풀이를 쓰고 답을 적어요"}
     >
       {FORMAT_LABEL[format]}
+      {multi && " · 정답 여러 개"}
     </span>
   );
 }

@@ -11,7 +11,7 @@ import type { Figure } from "@/lib/figure";
 import { useTeacherClass } from "@/components/useTeacherClass";
 import { makeVariants, solveLinear, type Solved } from "@/lib/equation";
 import { formatDue, statusOf, type Assignment as BaseAssignment, type AssignmentStatus } from "@/lib/types";
-import { CHOICE_MARKS, choiceBody, choiceMark, FORMAT_LABEL, formatOf, joinChoices, splitChoices, type ProblemFormat } from "@/lib/problemFormat";
+import { CHOICE_MARKS, choiceBody, choiceMarks, FORMAT_LABEL, formatOf, joinChoices, splitChoices, type ProblemFormat } from "@/lib/problemFormat";
 
 // 목록 API: 정해진 학생에게만 낸 과제(보충)는 받은 학생과 낸 문항 수가 같이 온다
 type Recipient = { id: string; name: string; number: number | null; solved: number };
@@ -35,7 +35,7 @@ const STATUS_BADGE: Record<AssignmentStatus, { label: string; cls: string }> = {
 // templateId: 문제은행 틀에서 만든 문항 (교육과정). 문제를 고치면 틀·정답 연결을 뗀다
 // ai: AI 가 만든 문항 초안 (정답을 교사가 확인해야 함)
 // figure: 문항 그림 (AI 가 만든 설계도 또는 선생님이 올린 이미지)
-// format: 객관식이면 question 은 문제 글만, 보기는 options (번호 없이), 정답은 correct (보기 순서)
+// format: 객관식이면 question 은 문제 글만, 보기는 options (번호 없이), 정답은 correct (보기 순서, 여러 개 가능)
 type Draft = {
   key: string;
   question: string;
@@ -48,7 +48,7 @@ type Draft = {
   figure?: Figure;
   format: ProblemFormat;
   options: string[];
-  correct: number | null;
+  correct: number[];
 };
 
 const newKey = () => Math.random().toString(36).slice(2, 9);
@@ -64,27 +64,27 @@ const emptyDraft = (question = "", format: ProblemFormat = "essay"): Draft => ({
   open: false,
   format,
   options: emptyOptions(),
-  correct: null,
+  correct: [],
 });
 
 // "문제 글 ① 보기 ② 보기 …" + 정답 "③ …" → 객관식 칸 (문제 글 · 보기 · 정답 순서)
 function splitToChoice(question: string, answer: string): Pick<Draft, "question" | "options" | "correct"> {
   const { stem, choices } = splitChoices(question);
-  const mark = choiceMark(answer);
-  const k = mark ? choices.findIndex((c) => c.startsWith(mark)) : -1;
-  return { question: stem, options: choices.map(choiceBody), correct: k >= 0 ? k : null };
+  const marks = choiceMarks(answer);
+  const correct = choices.map((c, k) => (marks.some((m) => c.startsWith(m)) ? k : -1)).filter((k) => k >= 0);
+  return { question: stem, options: choices.map(choiceBody), correct };
 }
 
 // 출제할 때 보낼 문제 글·정답. 객관식은 빈 보기를 빼고 번호를 다시 매긴다
 function toQuestion(d: Draft): { question: string; answer: string } {
   if (d.format !== "choice") return { question: d.question, answer: d.answer };
   const filled = d.options.map((o, i) => ({ o: o.trim(), i })).filter((x) => x.o);
-  const at = filled.findIndex((x) => x.i === d.correct);
-  return { question: joinChoices(d.question, filled.map((x) => x.o)), answer: at >= 0 ? CHOICE_MARKS[at] : "" };
+  const marks = filled.map((x, at) => (d.correct.includes(x.i) ? CHOICE_MARKS[at] : "")).filter(Boolean);
+  return { question: joinChoices(d.question, filled.map((x) => x.o)), answer: marks.join(", ") };
 }
 const filledOptions = (d: Draft) => d.options.filter((o) => o.trim()).length;
-// 고른 정답 보기의 새 번호 (빈 보기를 뺀 순서)
-const correctMark = (d: Draft) => (d.correct !== null && d.options[d.correct]?.trim() ? toQuestion(d).answer : "");
+// 고른 정답 보기들의 새 번호 (빈 보기를 뺀 순서, 예: "②, ④")
+const correctMark = (d: Draft) => toQuestion(d).answer;
 
 function trySolve(q: string): Solved | null {
   if (!q.trim()) return null;
@@ -166,7 +166,7 @@ export default function AssignPage() {
           const options = split.options.length ? [...split.options, ...emptyOptions()].slice(0, Math.max(MAX_OPTIONS, split.options.length)) : d.options;
           return { ...d, format, templateId: undefined, ...(split.options.length ? { ...split, options } : {}) };
         }
-        const picked = d.correct !== null ? d.options[d.correct]?.trim() : "";
+        const picked = d.correct.map((k) => d.options[k]?.trim()).filter(Boolean).join(", ");
         return { ...d, format, answer: picked || d.answer };
       }),
     );
@@ -176,7 +176,7 @@ export default function AssignPage() {
     setDrafts((ds) =>
       ds.map((d) => {
         if (d.key !== key || d.options.length <= MIN_OPTIONS) return d;
-        const correct = d.correct === k ? null : d.correct !== null && d.correct > k ? d.correct - 1 : d.correct;
+        const correct = d.correct.filter((c) => c !== k).map((c) => (c > k ? c - 1 : c));
         return { ...d, options: d.options.filter((_, i) => i !== k), correct };
       }),
     );
@@ -338,7 +338,7 @@ export default function AssignPage() {
                       {choice && (
                         <div className="flex flex-col gap-1.5">
                           {d.options.map((o, k) => {
-                            const on = d.correct === k;
+                            const on = d.correct.includes(k);
                             return (
                               <div key={k} className="flex items-center gap-1.5">
                                 <button
@@ -346,8 +346,8 @@ export default function AssignPage() {
                                   role="radio"
                                   aria-checked={on}
                                   aria-label={`${k + 1}번 보기를 정답으로`}
-                                  title="정답으로 정하기"
-                                  onClick={() => patch(d.key, { correct: on ? null : k })}
+                                  title={on ? "정답에서 빼기" : "정답으로 정하기 (여러 개 고를 수 있어요)"}
+                                  onClick={() => patch(d.key, { correct: on ? d.correct.filter((c) => c !== k) : [...d.correct, k].sort((a, b) => a - b) })}
                                   className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-lg transition ${
                                     on ? "bg-sage font-bold text-white" : "border border-line bg-paper text-ink hover:bg-sand"
                                   }`}
@@ -404,7 +404,10 @@ export default function AssignPage() {
                                 {d.ai ? `AI 초안 · 정답 ${mark} 확인해 주세요` : `✓ 정답 ${mark}`}
                               </span>
                             ) : (
-                              <span className="rounded-full bg-salmon-soft px-2.5 py-1 text-[#b5624f]">보기 번호를 눌러 정답을 골라 주세요</span>
+                              <span className="rounded-full bg-salmon-soft px-2.5 py-1 text-[#b5624f]">보기 번호를 눌러 정답을 골라 주세요 (여러 개 가능)</span>
+                            )}
+                            {filledOptions(d) >= MIN_OPTIONS && mark.includes(",") && (
+                              <span className="rounded-full bg-honey-soft px-2.5 py-1 text-olive">정답 여러 개 · 학생은 모두 골라야 정답</span>
                             )}
                             {d.concept.trim() && <span className="rounded-full bg-sand px-2.5 py-1 text-muted">{d.concept}</span>}
                           </>
@@ -677,23 +680,35 @@ export default function AssignPage() {
                       </span>
                       {/* 설정한 정답 (비워 둔 일차방정식은 풀이기 정답). 누르면 고치기 */}
                       {answerEdit?.problemId === p.id && formatOf(p) === "choice" ? (
-                        // 객관식: 보기 번호를 눌러 정답을 바로 바꾼다
+                        // 객관식: 보기 번호를 눌러 정답을 고르고 (여러 개 가능) 저장
                         <div className="ml-auto flex shrink-0 flex-wrap items-center gap-1 self-start">
                           {splitChoices(p.question).choices.map((c) => {
                             const m = c.charAt(0);
-                            const on = choiceMark(p.answer) === m;
+                            const marks = choiceMarks(answerEdit.value);
+                            const on = marks.includes(m);
                             return (
                               <button
                                 key={m}
                                 type="button"
                                 title={c}
-                                onClick={async () => (await update(a.id, { answer: { problemId: p.id, answer: m } })) && setAnswerEdit(null)}
+                                aria-pressed={on}
+                                onClick={() =>
+                                  setAnswerEdit({ ...answerEdit, value: (on ? marks.filter((x) => x !== m) : [...marks, m]).join(", ") })
+                                }
                                 className={`grid h-7 w-7 place-items-center rounded-full text-sm ${on ? "bg-sage font-bold text-white" : "border border-line bg-white hover:bg-sand"}`}
                               >
                                 {m}
                               </button>
                             );
                           })}
+                          <button
+                            type="button"
+                            disabled={!choiceMarks(answerEdit.value).length}
+                            onClick={async () => (await update(a.id, { answer: { problemId: p.id, answer: answerEdit.value } })) && setAnswerEdit(null)}
+                            className="rounded-full bg-sage px-2.5 py-0.5 text-xs text-white disabled:opacity-40"
+                          >
+                            저장
+                          </button>
                           <button type="button" onClick={() => setAnswerEdit(null)} className="rounded-full border border-line px-2 py-0.5 text-xs text-muted">
                             취소
                           </button>
@@ -723,7 +738,7 @@ export default function AssignPage() {
                       ) : (
                         (() => {
                           // 객관식은 번호만 짧게
-                          const ans = formatOf(p) === "choice" ? choiceMark(p.answer) : p.answer?.trim() || trySolve(p.question)?.answer;
+                          const ans = formatOf(p) === "choice" ? choiceMarks(p.answer).join(", ") : p.answer?.trim() || trySolve(p.question)?.answer;
                           return (
                             <button
                               type="button"
