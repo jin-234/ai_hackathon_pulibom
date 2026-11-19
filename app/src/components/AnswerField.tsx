@@ -150,15 +150,42 @@ export default function AnswerField({
     return { x: e.clientX - r.left, y: e.clientY - r.top, t: Math.round(performance.timeOrigin + e.timeStamp) };
   };
 
+  // 입력칸은 평소 읽기 전용: iPad 손글씨 입력(Scribble)이 칸 근처에 쓴 글씨까지 받아 가지 않게.
+  // 키보드로 고칠 때만 풀고 포커스 (iOS 는 같은 터치 안에서 포커스해야 키보드가 떠서 DOM 에 바로 쓴다)
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.readOnly = true;
+  }, []);
+  const focusInput = () => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.readOnly = false;
+    el.focus();
+  };
+
+  const inside = (p: Point) => {
+    const c = canvasRef.current!;
+    return p.x >= 0 && p.y >= 0 && p.x <= c.clientWidth && p.y <= c.clientHeight;
+  };
+
+  // 펜이 닿아 있는 동안 (칸 밖으로 나가면 획을 끊고, 다시 들어오면 새 획)
+  const penDownRef = useRef(false);
+  const endStroke = () => {
+    const s = drawingRef.current;
+    if (!s) return;
+    drawingRef.current = null;
+    strokesRef.current = [...strokesRef.current, s];
+  };
+
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (disabled) return;
     if (e.pointerType === "mouse") {
       e.preventDefault();
-      inputRef.current?.focus();
+      focusInput();
       return;
     }
     if (e.pointerType !== "pen") return; // 손가락은 손을 뗄 때
     e.currentTarget.setPointerCapture(e.pointerId);
+    penDownRef.current = true;
     clearTimeout(timerRef.current);
     setBubble(null);
     setInking(true);
@@ -167,21 +194,24 @@ export default function AnswerField({
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const s = drawingRef.current;
-    if (!s) return;
+    if (!penDownRef.current) return;
     const events = e.nativeEvent.getCoalescedEvents?.() ?? [];
-    for (const ev of events.length ? events : [e]) s.points.push(point(ev));
+    for (const ev of events.length ? events : [e]) {
+      const p = point(ev);
+      if (!inside(p)) endStroke(); // 칸 밖 좌표는 읽지 않는다
+      else if (drawingRef.current) drawingRef.current.points.push(p);
+      else drawingRef.current = { id: strokeId(), tool: "pen", color: PEN, width: PEN_WIDTH, points: [p] };
+    }
     redraw();
   };
 
   const onPointerUp = () => {
-    const s = drawingRef.current;
-    if (!s) return;
-    drawingRef.current = null;
-    strokesRef.current = [...strokesRef.current, s];
+    if (!penDownRef.current) return;
+    penDownRef.current = false;
+    endStroke();
     redraw();
     clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(recognize, IDLE_MS);
+    if (strokesRef.current.length) timerRef.current = window.setTimeout(recognize, IDLE_MS);
   };
 
   return (
@@ -196,8 +226,14 @@ export default function AnswerField({
         ref={inputRef}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
+        onFocus={(e) => {
+          setFocused(true);
+          e.currentTarget.readOnly = false; // Tab 키로 들어와도 입력되게
+        }}
+        onBlur={(e) => {
+          setFocused(false);
+          e.currentTarget.readOnly = true;
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.nativeEvent.isComposing) {
             e.preventDefault();
@@ -226,7 +262,7 @@ export default function AnswerField({
         onTouchEnd={(e) => {
           // 손가락: 터치가 끝날 때 포커스해야 iOS 키보드가 뜬다
           const finger = Array.from(e.changedTouches).some((t) => (t as Touch & { touchType?: string }).touchType !== "stylus");
-          if (finger && !disabled) inputRef.current?.focus();
+          if (finger && !disabled) focusInput();
         }}
         className={`absolute inset-0 h-full w-full touch-none rounded-full ${focused ? "pointer-events-none" : ""}`}
       />
@@ -250,6 +286,51 @@ export default function AnswerField({
           {bubble}
         </div>
       )}
+    </div>
+  );
+}
+
+// 객관식 답안 칸: 보기 번호(①②③…)를 나열해서 하나를 고른다. 값은 고른 보기 전체 ("③ (x - 2)(x + 2)")
+export function ChoiceField({
+  choices,
+  value,
+  onChange,
+  disabled,
+}: {
+  choices: string[];
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  const picked = value.trim().charAt(0);
+  return (
+    <div
+      role="radiogroup"
+      aria-label="답 고르기"
+      className={`flex h-[54px] min-w-0 flex-1 items-center gap-1.5 rounded-full border border-honey bg-paper pr-2 ${disabled ? "opacity-50" : ""}`}
+    >
+      <span className="shrink-0 pl-5 pr-2 font-extrabold text-ink">답</span>
+      {choices.map((c) => {
+        const mark = c.charAt(0);
+        const on = mark === picked;
+        return (
+          <button
+            key={mark}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            aria-label={c}
+            title={c}
+            disabled={disabled}
+            onClick={() => onChange(on ? "" : c)}
+            className={`grid h-10 min-w-10 flex-1 place-items-center rounded-full text-xl transition ${
+              on ? "bg-honey font-bold text-ink ring-2 ring-honey-deep" : "text-ink hover:bg-sand"
+            }`}
+          >
+            {mark}
+          </button>
+        );
+      })}
     </div>
   );
 }

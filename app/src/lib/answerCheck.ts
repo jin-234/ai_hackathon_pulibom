@@ -34,8 +34,15 @@ function forms(s: string) {
   return [...new Set([n, rhs(n), stripUnit(n), stripUnit(rhs(n))])].filter(Boolean);
 }
 
+// 객관식 번호 (① ~ ⑩ 중 맨 앞 글자)
+const CHOICE = /^[①-⑩]/;
+
 export function checkAnswer(answerText: string | null | undefined, expected: string | null | undefined): boolean | null {
   if (!answerText?.trim() || !expected?.trim()) return null;
+  // 객관식: 정답이 "③ (x - 2)(x + 2)" 처럼 번호로 시작하면 번호만 비교 ("③", "③ (x-2)(x+2)" 모두 정답)
+  const ce = expected.trim().match(CHOICE)?.[0];
+  const ca = answerText.trim().match(CHOICE)?.[0];
+  if (ce && ca) return ce === ca;
   const a = forms(answerText);
   const b = forms(expected);
   for (const x of a)
