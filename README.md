@@ -39,57 +39,87 @@
 시연 시나리오: **과제 배정 → 학생 풀이 → 학급 데이터 정렬 → 학생 상세 확인 → 보충 지도 → 결과 갱신**
 (가상 데이터 화면과 실제 AI 처리 결과는 구분해서 보여주기)
 
-## AI 구성 (국내 모델 우선)
+## 기술 스택 (구현됨)
 
-| 단계 | 모델 | 역할 |
-|---|---|---|
-| 문항 구조화 | Upstage Document Parse | 문제지 → 문항 번호·내용·수식 영역 |
-| 손글씨 인식 | **Upstage OCR → Mathpix OCR → Claude** | 학생 필기 문자·숫자·수식 + 위치 (아래 폴백 순서) |
-| 풀이 분석 | LG AI연구원 EXAONE 4.5 | 원본 이미지 + OCR + 정답 해설로 오류 의심 단계·오류 유형 |
-| 요약·지도 제안 | Upstage Solar Pro | 학생별 취약 개념, 지도 우선순위, 보충 질문·유사 문항 |
-| (확장) | VARCO-VISION, 믿:음, A.X, VARCO Voice | 재검토, 수준별 설명, 교사 질의, 음성 설명 |
+| 구분 | 사용 |
+|---|---|
+| 웹 | Next.js 15 (App Router) + TypeScript + Tailwind — `app/` |
+| DB · 이미지 | **Supabase** (Postgres + Storage `solutions` 버킷) |
+| 손글씨 OCR | **Upstage OCR** → (키 있으면) Mathpix → Claude |
+| 풀이 분석 · 지도 제안 | **Claude Code 헤드리스** (`claude -p`, API 키 X, 구독 결제분 사용) |
 
-### 손글씨 OCR 폴백 순서
-
-```
-풀이 이미지
-  → ① Upstage OCR      ── 인식 성공 → 사용
-       │ 인식 실패
-  → ② Mathpix OCR      ── 인식 성공 → 사용
-       │ 인식 실패
-  → ③ Claude (Vision)  ── 인식 성공 → 사용
-       │ 인식 실패
-  → "확인 필요" 표시 (교사가 직접 확인)
-```
-
-- **인식 실패 기준**: 결과가 비어 있음 / 신뢰도(confidence)가 기준값 미만 / 수식으로 파싱이 안 됨 / API 오류·타임아웃
-- 결과마다 **어느 엔진이 인식했는지**(`upstage`·`mathpix`·`claude`)를 함께 저장해서, 교사 화면과 정확도 비교에 쓴다
-- 키: `UPSTAGE_API_KEY`, `MATHPIX_APP_ID`, `MATHPIX_APP_KEY`, `ANTHROPIC_API_KEY` (`.env`)
-
-오류 유형 예시: 부호·계산 / 동류항 정리 / 등식 변형 (`2x+3=11` → `2x=11+3`)
-
-## 폴더
+### AI 파이프라인
 
 ```
-기획서/   제출한 아이디어 소개서·백월 자료 (PDF)
-app/      서비스 코드
-assets/   이미지·시연 자료
+학생 제출 (풀이 PNG + 최종 답 + 필기 이벤트)
+  → Supabase Storage 업로드, submissions 저장, 최종 답 자동 채점
+  → [백그라운드 큐]
+     ① Upstage OCR      ── 성공 → 사용
+          │ 실패
+     ② Mathpix OCR      ── (MATHPIX 키 없으면 건너뜀)
+          │ 실패
+     ③ Claude 헤드리스   ── 이미지를 직접 읽어서 받아쓰기
+          │ 실패
+     → status = needs_review ("확인 필요")
+  → Claude 헤드리스 풀이 분석: 원본 이미지 + OCR 결과 + 정답·모범풀이
+     → 줄별 단계, 처음 틀린 줄, 오류 유형, 근거, 지도 제안, 확인 질문
+  → submissions 업데이트 → 교사 대시보드 자동 새로고침
 ```
+
+- **OCR 실패 기준**: 빈 결과 / 신뢰도 < `OCR_MIN_CONFIDENCE`(0.6) / 숫자·x·= 가 없음 / API 오류·타임아웃
+- 어느 엔진이 읽었는지(`ocr_engine`)와 시도 내역(`ocr_attempts`)이 저장되고 교사 화면에 표시됨
+- 오류 유형 5개 = 보충 개념 5개: 부호·계산 / 동류항 정리 / 등식 변형(이항) / 괄호 전개 / 분수·소수 계수
+- 기획서의 EXAONE·Solar는 이후 `lib/analyze.ts`의 `analyzeSolution`만 바꿔 끼우면 됨
+
+### Claude 헤드리스 주의
+
+- 서버가 `claude` CLI를 직접 실행함 → **`claude` 로그인된 컴퓨터에서 서버를 띄워야** 함 (Vercel 배포 X, 시연은 노트북에서 `npm run dev`/`npm start`)
+- 실행 시 `ANTHROPIC_API_KEY` 환경변수를 지워서 API 과금으로 안 넘어가게 해둠
+- 한 건당 OCR 폴백 ~6초 + 분석 ~10초 (sonnet 기준). 동시 실행 수는 `ANALYSIS_CONCURRENCY`
+
+## 실행 방법
+
+1. **Supabase 프로젝트 생성** → SQL Editor에서 `supabase/schema.sql` → `supabase/seed.sql` 순서로 실행
+2. **환경변수**: `app/.env.example` 을 `app/.env.local` 로 복사하고 값 채우기
+   - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (Project Settings → API)
+   - `UPSTAGE_API_KEY`
+   - (선택) `MATHPIX_APP_ID`, `MATHPIX_APP_KEY`
+3. **Claude 로그인 확인**: 터미널에서 `claude` 실행돼야 함
+4. 실행
+   ```bash
+   cd app
+   npm install
+   npm run dev          # http://localhost:3000
+   ```
+5. DB 없이 OCR+분석만 테스트: `npm run test:pipeline -- 풀이.png "3x + 6 = 15" 3 7`
+
+## 화면
+
+| 경로 | 내용 |
+|---|---|
+| `/student` → `/student/s01` | 학생 선택 → 과제 목록 (보충 과제 포함) |
+| `/student/[id]/a/[과제]` | 문항 + 필기 캔버스(펜·지우개·색·되돌리기, 펜 사용 시 손바닥 무시) + 최종 답 → 제출 |
+| `/teacher` | 학급 표: 제출·정답률·평균 풀이 시간·취약 개념·반복 오류·학습 변화·확인 필요, 과제/개념/상태 필터, 열 정렬 |
+| `/teacher/students/[id]` | 개념별 오류 막대 + 보충 과제 배정, 관찰 메모, 풀이 카드(원본 이미지·OCR 엔진·단계별 분석·교사 수정·확인 완료·재분석) |
+
+시드 데이터: 1학년 3반 6명, 문항 15개, 과제 2개, 과제 1에 가상 제출 28건(`가상` 배지로 구분).
 
 ## 체크리스트
 
-- [ ] 기술 스택 확정 & `app/` 세팅
-- [ ] 학생 풀이 화면 (필기 캔버스 + 제출)
-- [ ] OCR → 풀이 분석 파이프라인 1문항 성공
-- [ ] 교사 대시보드 (표 + 정렬/필터)
-- [ ] 학생 상세 화면 (원본 풀이 + 분석 근거)
-- [ ] 보충 과제 → 재풀이 → 변화 반영
+- [x] 기술 스택 확정 & `app/` 세팅
+- [x] 학생 풀이 화면 (필기 캔버스 + 제출)
+- [x] OCR → 풀이 분석 파이프라인 (Claude 경로 테스트 완료)
+- [ ] Upstage 키 넣고 실제 응답 확인
+- [ ] Supabase 연결해서 제출 → 분석 → 대시보드 한 바퀴
+- [x] 교사 대시보드 (표 + 정렬/필터)
+- [x] 학생 상세 화면 (원본 풀이 + 분석 근거)
+- [x] 보충 과제 배정 → 재풀이 → 변화 반영
 - [ ] 시연용 가상 데이터 & 시나리오 리허설
 - [ ] 발표 자료
 
 ## 주의
 
-- API 키는 `.env`에만 넣고 커밋하지 않기 (`.gitignore`에 등록됨)
+- 키는 `app/.env.local`에만 넣고 커밋하지 않기 (`.gitignore`에 등록됨). service role 키는 서버 코드에서만 사용
 - `기획서/아이디어_소개서.pdf`에는 팀원 개인정보(생년월일·서명)가 있으니 레포 공개 전환 금지
 - 학생 데이터는 가상 데이터만 사용, 외부 AI에는 풀이 영역만 전달
 
