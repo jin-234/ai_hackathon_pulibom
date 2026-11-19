@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { CountSelect } from "@/components/SupplementPanel";
-import { lessonTitle, unitsOf, type Lesson } from "@/lib/curriculum";
+import { gradeLabel, lessonTitle, unitsOf, type Lesson } from "@/lib/curriculum";
 import type { UnitItem } from "@/lib/unitProblems";
 
 // 과제 출제: 반의 학년 교육과정 단원 목록 → 소단원을 고르면 과제 이름을 채우고, 문항은 문제은행 틀 또는 AI로 만든다 (직접 입력도 그대로 가능)
@@ -57,7 +57,7 @@ export function CurriculumPicker({
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-line bg-cream/60 p-4">
       <div className="flex flex-wrap items-baseline gap-2">
-        <span className="text-sm font-semibold">중{grade} 교육과정에서 고르기</span>
+        <span className="text-sm font-semibold">{gradeLabel(grade)} 교육과정에서 고르기</span>
         <span className="text-[11px] text-muted">2022 개정 · 단원을 고르면 과제 이름이 채워져요</span>
       </div>
 
