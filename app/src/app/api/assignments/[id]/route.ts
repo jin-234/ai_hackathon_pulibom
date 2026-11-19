@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { countAssignmentSubmissions, deleteAssignment, setProblemAnswer, updateAssignment } from "@/lib/assignments";
 import { requireOwnAssignment } from "@/lib/guard";
+import { choiceMark, formatOf, splitChoices } from "@/lib/problemFormat";
 
 export const runtime = "nodejs";
 
@@ -25,7 +26,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const { problemId, answer } = body.answer;
     if (typeof problemId !== "string" || typeof answer !== "string" || answer.length > 200)
       return NextResponse.json({ error: "정답을 확인해 주세요." }, { status: 400 });
-    if (!(await setProblemAnswer(id, problemId, answer.trim()))) return NextResponse.json({ error: "이 과제의 문항이 아니에요." }, { status: 404 });
+    // 객관식 문항은 보기 중 하나만 정답으로 ("③" 만 보내도 "③ 보기 내용" 으로 저장)
+    const problem = g.assignment.problems.find((p) => p.id === problemId);
+    let value = answer.trim();
+    if (problem && formatOf(problem) === "choice" && value) {
+      const mark = choiceMark(value);
+      const picked = mark ? splitChoices(problem.question).choices.find((c) => c.startsWith(mark)) : undefined;
+      if (!picked) return NextResponse.json({ error: "객관식 정답은 보기 중에서 골라 주세요." }, { status: 400 });
+      value = picked;
+    }
+    if (!(await setProblemAnswer(id, problemId, value))) return NextResponse.json({ error: "이 과제의 문항이 아니에요." }, { status: 404 });
   }
   if (body.title !== undefined && !body.title.trim()) return NextResponse.json({ error: "과제 이름을 입력해 주세요." }, { status: 400 });
   if (typeof body.dueAt === "number" && body.dueAt <= Date.now())

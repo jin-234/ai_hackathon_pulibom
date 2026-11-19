@@ -3,24 +3,9 @@
 //   점 C(0, 7)에 대한 설명으로 옳은 것은?
 //   ① x축 위에 있다
 //   ② y축 위에 있다 …
-const MARK = /[①-⑩]/;
+import { splitChoices } from "@/lib/problemFormat";
 
-export function splitChoices(text: string): { stem: string; choices: string[] } {
-  const at = text.search(MARK);
-  if (at < 0) return { stem: text, choices: [] };
-  let stem = text.slice(0, at).trimEnd();
-  let rest = text.slice(at);
-  // 보기 전체를 감싼 괄호 "( … )" 는 뗀다
-  if (stem.endsWith("(") && rest.trimEnd().endsWith(")")) {
-    stem = stem.slice(0, -1).trimEnd();
-    rest = rest.trimEnd().slice(0, -1);
-  }
-  const choices = rest
-    .split(/(?=[①-⑩])/)
-    .map((c) => c.trim().replace(/[,，]$/, ""))
-    .filter(Boolean);
-  return { stem, choices };
-}
+export { splitChoices };
 
 export default function QuestionText({ text, className = "" }: { text: string; className?: string }) {
   const { stem, choices } = splitChoices(text);

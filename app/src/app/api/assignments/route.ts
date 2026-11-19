@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAssignment, listAssignments } from "@/lib/assignments";
-import { buildProblems } from "@/lib/buildProblems";
+import { buildProblems, type QuestionInput } from "@/lib/buildProblems";
 import { resolveTeacherClass, teacherClass } from "@/lib/classes";
 import { query } from "@/lib/db";
 import { requireTeacher } from "@/lib/guard";
@@ -57,7 +57,7 @@ export async function POST(req: Request) {
   const body = (await req.json()) as {
     classId?: string;
     title?: string;
-    questions?: { question: string; answer?: string; solution?: string; concept?: string }[];
+    questions?: QuestionInput[]; // format: "choice" 객관식 (보기는 question 끝 ①②…, 정답은 보기 번호) / "essay" 서술형
     publish?: boolean;
     dueAt?: number | null;
   };

@@ -1,6 +1,7 @@
 import { studentCurrentClassIds } from "./classes";
 import { query } from "./db";
 import { PROBLEMS } from "./problems";
+import { asFormat } from "./problemFormat";
 import { statusOf, visibleTo, type Assignment, type Problem, type SupplementInfo, type SupplementReview } from "./types";
 
 export type { Assignment };
@@ -19,7 +20,7 @@ type ARow = {
   supplement: SupplementInfo | null;
   created_at: Date;
   kind: string | null;
-  problems: (Omit<Problem, "free" | "templateId"> & { free: boolean; templateId: string | null })[] | null;
+  problems: (Omit<Problem, "free" | "templateId" | "format"> & { free: boolean; templateId: string | null; format: string | null })[] | null;
 };
 
 function toAssignment(r: ARow): Assignment {
@@ -34,9 +35,10 @@ function toAssignment(r: ARow): Assignment {
     ...(r.student_ids?.length ? { studentIds: r.student_ids } : {}),
     ...(r.supplement ? { supplement: r.supplement } : {}),
     ...(r.kind === "diagnostic" ? { kind: "diagnostic" as const } : {}),
-    problems: (r.problems ?? []).map(({ templateId, figure, ...p }) => ({
+    problems: (r.problems ?? []).map(({ templateId, figure, format, ...p }) => ({
       ...p,
       ...(figure ? { figure } : {}),
+      ...(asFormat(format) ? { format: asFormat(format) } : {}),
       ...(p.free ? { free: true } : { free: undefined }),
       ...(templateId ? { templateId } : {}),
     })),
@@ -50,7 +52,8 @@ const SELECT = `
          COALESCE(
            (SELECT json_agg(json_build_object('id', p.id, 'title', p.title, 'question', p.question, 'free', p.free,
                                               'answer', p.answer, 'concept', p.concept, 'solution', p.solution,
-                                              'templateId', p.template_id, 'figure', to_jsonb(p)->'figure')
+                                              'templateId', p.template_id, 'figure', to_jsonb(p)->'figure',
+                                              'format', to_jsonb(p)->>'format') -- 17_problem_format.sql 전 DB 에서도 동작
                             ORDER BY p.position)
               FROM problems p WHERE p.assignment_id = a.id),
            '[]') AS problems
@@ -100,9 +103,15 @@ export async function findProblem(problemId: string): Promise<Problem | undefine
 
 async function insertProblems(assignmentId: string, problems: Omit<Problem, "id">[] | Problem[]) {
   for (const [i, p] of problems.entries()) {
+    // 그림·유형이 없으면 그 칸을 안 써서 12_problem_figures.sql · 17_problem_format.sql 전 DB 에서도 동작
+    const format = p.format ?? null;
+    const extra: [string, unknown][] = [
+      ...(p.figure ? [["figure", JSON.stringify(p.figure)] as [string, unknown]] : []),
+      ...(format ? [["format", format] as [string, unknown]] : []),
+    ];
     await query(
-      `INSERT INTO problems (id, assignment_id, position, title, question, free, answer, concept, solution, template_id${p.figure ? ", figure" : ""})
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10${p.figure ? ", $11" : ""}) ON CONFLICT (id) DO NOTHING`,
+      `INSERT INTO problems (id, assignment_id, position, title, question, free, answer, concept, solution, template_id${extra.map(([c]) => `, ${c}`).join("")})
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10${extra.map((_, k) => `, $${11 + k}`).join("")}) ON CONFLICT (id) DO NOTHING`,
       [
         "id" in p ? p.id : `${assignmentId}-p${i + 1}`,
         assignmentId,
@@ -114,7 +123,7 @@ async function insertProblems(assignmentId: string, problems: Omit<Problem, "id"
         p.concept ?? "",
         p.solution ?? [],
         p.templateId ?? null,
-        ...(p.figure ? [JSON.stringify(p.figure)] : []), // 그림이 없으면 figure 칸을 안 써서 12_problem_figures.sql 전 DB 에서도 동작
+        ...extra.map(([, v]) => v),
       ],
     );
   }
