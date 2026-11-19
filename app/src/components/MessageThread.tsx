@@ -9,8 +9,7 @@ const sizeLabel = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixe
 // 선생님 화면: 학생과 주고받는 메시지 (학생 상세 '메시지' 탭). 열려 있는 동안 5초마다 새 메시지를 가져온다
 //  - 아직 대화가 없어도 선생님이 먼저 보낼 수 있다 (상단 💬 의 '새 메시지'로도 연다)
 //  - 학습 자료: 📎 파일(4MB 이하), 본문에 붙여 넣은 유튜브·웹 주소는 링크 카드로 (학생 아이패드 앱에서 바로 열림)
-//  - concepts: 이 학생의 약한 개념 → 유튜브에서 개념 영상 찾기 (찾은 영상 주소를 붙여 넣어 보낸다)
-export default function MessageThread({ studentId, studentName, concepts = [] }: { studentId: string; studentName: string; concepts?: string[] }) {
+export default function MessageThread({ studentId, studentName }: { studentId: string; studentName: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [canSend, setCanSend] = useState(false);
   const [text, setText] = useState("");
@@ -84,7 +83,6 @@ export default function MessageThread({ studentId, studentName, concepts = [] }:
     }
   };
 
-  const searchable = [...new Set(concepts.map((c) => c.trim()).filter(Boolean))].slice(0, 3);
 
   return (
     <section className="flex flex-col gap-3 rounded-3xl border border-line bg-paper p-5">
@@ -119,23 +117,6 @@ export default function MessageThread({ studentId, studentName, concepts = [] }:
       </div>
       {canSend ? (
         <div className="flex flex-col gap-2">
-          {searchable.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 text-xs">
-              <span className="text-muted">개념 영상 찾기</span>
-              {searchable.map((c) => (
-                <a
-                  key={c}
-                  href={`https://www.youtube.com/results?search_query=${encodeURIComponent(`${c} 개념 강의`)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rounded-full border border-line px-2.5 py-1 hover:bg-sand"
-                >
-                  ▶ {c}
-                </a>
-              ))}
-              <span className="text-muted">· 찾은 영상 주소를 아래에 붙여 넣어 보내면 돼요</span>
-            </div>
-          )}
           {file && (
             <div className="flex w-fit items-center gap-2 rounded-full border border-line bg-sand/60 px-3 py-1 text-xs">
               📎 {file.name} <span className="text-muted">{sizeLabel(file.size)}</span>
