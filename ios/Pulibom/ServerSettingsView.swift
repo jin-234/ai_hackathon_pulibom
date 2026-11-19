@@ -1,12 +1,26 @@
 import SwiftUI
 
 enum ServerAddress {
-    // "192.168.0.10:3000" 처럼 http:// 없이 넣어도 되게
+    // 배포된 풀이봄 (Vercel). 처음 켤 때 기본 주소
+    static let deployed = "https://pulibom.vercel.app"
+
+    // "192.168.0.10:3000" 처럼 http:// 없이 넣어도 되게 (맥 IP·localhost 는 http, 도메인은 https)
     static func normalize(_ raw: String) -> String {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         while s.hasSuffix("/") { s.removeLast() }
-        if !s.isEmpty && !s.contains("://") { s = "http://" + s }
+        if !s.isEmpty && !s.contains("://") { s = (isLocal(s) ? "http://" : "https://") + s }
         return s
+    }
+
+    // 맥에서 켠 개발 서버 주소인지 (localhost, 사설 IP)
+    static func isLocal(_ raw: String) -> Bool {
+        var host = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let r = host.range(of: "://") { host = String(host[r.upperBound...]) }
+        host = String(host.prefix { $0 != ":" && $0 != "/" })
+        if host == "localhost" || host.hasSuffix(".local") { return true }
+        let p = host.split(separator: ".").compactMap { Int($0) }
+        guard p.count == 4 else { return false }
+        return p[0] == 10 || p[0] == 127 || (p[0] == 192 && p[1] == 168) || (p[0] == 172 && (16...31).contains(p[1]))
     }
 
     static func url(from raw: String) -> URL? {
@@ -40,7 +54,7 @@ struct ServerSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("서버 주소").font(.subheadline).foregroundStyle(Color.muted)
-                    TextField("192.168.0.10:3000", text: $draft)
+                    TextField("pulibom.vercel.app", text: $draft)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -49,7 +63,7 @@ struct ServerSettingsView: View {
                         .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
                         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.honey, lineWidth: 1))
                         .onSubmit(save)
-                    Text("맥에서 서버를 켠 뒤 '맥 IP 주소:3000'을 넣으면 돼요. (맥: 시스템 설정 → Wi-Fi → 세부사항에서 IP 확인)")
+                    Text("보통은 pulibom.vercel.app 그대로 두면 돼요. 맥에서 켠 개발 서버에 붙을 땐 '맥 IP 주소:3000'을 넣어 주세요.")
                         .font(.footnote)
                         .foregroundStyle(Color.muted)
                 }

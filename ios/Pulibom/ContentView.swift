@@ -1,8 +1,10 @@
 import SwiftUI
 
 struct ContentView: View {
-    // 풀이봄 웹 서버 주소 (예: http://192.168.0.10:3000). 처음 켤 때 입력받는다.
-    @AppStorage("serverURL") private var serverURL = ""
+    // 풀이봄 웹 서버 주소. 기본은 Vercel, 개발할 땐 맥 IP(예: http://192.168.0.10:3000)로 바꿀 수 있다
+    @AppStorage("serverURL") private var serverURL = ServerAddress.deployed
+    // Vercel 배포 전에 저장해 둔 맥 IP 를 한 번만 Vercel 로 바꿔 줬는지
+    @AppStorage("movedToDeployed") private var movedToDeployed = false
     @State private var showSettings = false
     @State private var loadError: String?
     @State private var reloadToken = 0
@@ -71,6 +73,10 @@ struct ContentView: View {
             student = nil
         }
         .onAppear {
+            if !movedToDeployed {
+                movedToDeployed = true
+                if serverURL.isEmpty || ServerAddress.isLocal(serverURL) { serverURL = ServerAddress.deployed }
+            }
             // 수업 중에 화면이 꺼지지 않게
             UIApplication.shared.isIdleTimerDisabled = true
         }
@@ -98,7 +104,9 @@ struct ConnectionErrorView: View {
                     .font(.footnote)
                     .foregroundStyle(Color.muted)
                     .multilineTextAlignment(.center)
-                Text("맥과 아이패드가 같은 와이파이에 있는지, 맥에서 서버(npm run dev)가 켜져 있는지 확인해 주세요.")
+                Text(ServerAddress.isLocal(address)
+                     ? "맥과 아이패드가 같은 와이파이에 있는지, 맥에서 서버(npm run dev)가 켜져 있는지 확인해 주세요."
+                     : "아이패드가 인터넷에 연결돼 있는지 확인하고 다시 시도해 주세요.")
                     .font(.footnote)
                     .foregroundStyle(Color.muted)
                     .multilineTextAlignment(.center)

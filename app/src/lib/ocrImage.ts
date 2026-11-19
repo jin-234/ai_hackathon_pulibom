@@ -83,7 +83,37 @@ function splitLines(boxes: Box[], gh: number): Box[][] {
       out[best].push(b);
     }),
   );
-  return out.filter((l) => l.length).sort((a, b) => median(a.map((x) => x.cy)) - median(b.map((x) => x.cy)));
+  const sorted = out.filter((l) => l.length).sort((a, b) => median(a.map((x) => x.cy)) - median(b.map((x) => x.cy)));
+  return mergeSideBySide(sorted);
+}
+
+// 옆으로 나란히 있고 높이가 겹치는 두 줄은 한 줄로 합친다.
+// ('=7x' 를 먼저 쓰고 왼쪽으로 돌아가 '-14' 를 살짝 아래에 쓰면 새 줄로 잘못 나뉜다)
+// 진짜 다른 줄은 위아래로 겹치지 않아서 합쳐지지 않는다.
+function mergeSideBySide(lines: Box[][]): Box[][] {
+  const span = (l: Box[]) => ({
+    x0: Math.min(...l.map((b) => b.x0)),
+    x1: Math.max(...l.map((b) => b.x1)),
+    y0: Math.min(...l.map((b) => b.y0)),
+    y1: Math.max(...l.map((b) => b.y1)),
+  });
+  const out: Box[][] = [];
+  for (const l of lines) {
+    const prev = out[out.length - 1];
+    if (prev) {
+      const a = span(prev), b = span(l);
+      const xOverlap = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+      const yOverlap = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+      const minW = Math.min(a.x1 - a.x0, b.x1 - b.x0);
+      const minH = Math.min(a.y1 - a.y0, b.y1 - b.y0);
+      if (xOverlap <= 0.3 * minW && yOverlap > 0.3 * minH) {
+        prev.push(...l);
+        continue;
+      }
+    }
+    out.push(l);
+  }
+  return out;
 }
 
 // 줄 기울기: 획 중심의 최소제곱 직선 (획 3개 이상일 때만, 너무 큰 값은 자른다)
