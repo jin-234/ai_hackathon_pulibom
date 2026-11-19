@@ -1,5 +1,5 @@
 import type { Analysis, ErrorType, Problem } from "./types";
-import { ERROR_LABEL, LOW_OCR_CONFIDENCE, variableOf } from "./types";
+import { ERROR_LABEL, LOW_OCR_CONFIDENCE, asErrorType, variableOf } from "./types";
 
 export { variableOf };
 import { env } from "./env";
@@ -453,7 +453,7 @@ ${ocrLines.length ? `[학생이 답으로 쓴 마지막 줄] ${correctedLines[oc
   const json = text.match(/\{[\s\S]*\}/)?.[0];
   if (!json) throw new Error(`분석 결과에서 JSON을 찾지 못함: ${text.slice(0, 200)}`);
   const parsed = JSON.parse(json) as Partial<Analysis>;
-  const errorType = (parsed.errorType && parsed.errorType in ERROR_LABEL ? parsed.errorType : "UNREADABLE") as ErrorType;
+  const errorType: ErrorType = asErrorType(parsed.errorType) ?? "UNREADABLE";
   const firstErrorLine = typeof parsed.firstErrorLine === "number" ? parsed.firstErrorLine : null;
   return {
     correctedLines,

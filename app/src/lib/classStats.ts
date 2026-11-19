@@ -2,12 +2,13 @@ import { DEMO_CLASS, listAssignments } from "./assignments";
 import { classMembers, type ClassInfo } from "./classes";
 import { PROBLEMS } from "./problems";
 import { listSubmissions } from "./store";
+import { correctOf } from "./verdict";
 import { inkStats, supplementStudents, visibleTo, type Assignment, type ClassStats, type ErrorType, type Problem, type StudentStats, type Submission, type Trend } from "./types";
 
 // 실제 제출·AI 분석 결과로 학생별 지표를 계산한다.
 //  - 정답률은 문항마다 '최신 제출' 기준 (다시 제출하면 최신 것으로 대체)
 //  - 반복 오류는 서로 다른 문항에서 같은 오류 유형이 나온 횟수 (고치기 전 풀이 포함)
-//  - 교사가 수정한 오류 유형이 있으면 AI 판정보다 우선
+//  - 교사가 수정한 오류 유형이 있으면 AI 판정보다 우선 (정오도 correctOf: 학생 화면과 같은 기준)
 //  - 정오 판정이 안 된 풀이(확인 필요)는 정답률 계산에서 빼고 '확인 필요'로 따로 센다
 const NOT_AN_ERROR: ErrorType[] = ["NONE", "UNREADABLE"];
 
@@ -34,8 +35,8 @@ export function supplementImproved(assignments: Assignment[], studentId: string,
       const latest = new Map<string, Submission>();
       for (const s of subs.filter((x) => x.studentId === studentId).sort((x, y) => x.submittedAt - y.submittedAt))
         if (a.problems.some((p) => p.id === s.problemId)) latest.set(s.problemId, s);
-      const judged = [...latest.values()].filter((s) => typeof s.analysis?.correct === "boolean");
-      return judged.length > 0 && judged.filter((s) => s.analysis!.correct).length / judged.length >= 2 / 3;
+      const judged = [...latest.values()].filter((s) => correctOf(s) !== null);
+      return judged.length > 0 && judged.filter((s) => correctOf(s)).length / judged.length >= 2 / 3;
     });
 }
 
@@ -57,9 +58,9 @@ export function statsForStudent(
     latest.set(s.problemId, s);
   }
   const last = [...latest.values()];
-  const judged = last.filter((s) => typeof s.analysis?.correct === "boolean");
-  const correct = judged.filter((s) => s.analysis!.correct).length;
-  const wrong = judged.filter((s) => !s.analysis!.correct);
+  const judged = last.filter((s) => correctOf(s) !== null);
+  const correct = judged.filter((s) => correctOf(s)).length;
+  const wrong = judged.filter((s) => !correctOf(s));
 
   const conceptOf = (s: Submission) => s.analysis?.concept || byProblem.get(s.problemId)?.concept || "기타";
   const weak = mostFrequent(wrong.map(conceptOf));
@@ -71,7 +72,7 @@ export function statsForStudent(
   const reviewCount = last.filter((s) => (s.status === "needs_review" || s.status === "error") && !s.teacher?.confirmedAt).length;
 
   // 다시 제출해서 오답 → 정답이 된 문항이 있으면 '개선'
-  const improved = [...latest.keys()].some((pid) => first.get(pid)!.analysis?.correct === false && latest.get(pid)!.analysis?.correct === true);
+  const improved = [...latest.keys()].some((pid) => correctOf(first.get(pid)!) === false && correctOf(latest.get(pid)!) === true);
   const trend: Trend = !last.length
     ? "-"
     : improved || opts.supplementImproved
@@ -84,11 +85,13 @@ export function statsForStudent(
   const concepts = new Map<string, { firstOk: number; lastOk: number; n: number; retried: boolean }>();
   for (const [pid, l] of latest) {
     const f = first.get(pid)!;
-    if (typeof l.analysis?.correct !== "boolean" || typeof f.analysis?.correct !== "boolean") continue;
+    const fOk = correctOf(f);
+    const lOk = correctOf(l);
+    if (fOk === null || lOk === null) continue;
     const c = concepts.get(conceptOf(l)) ?? { firstOk: 0, lastOk: 0, n: 0, retried: false };
     c.n++;
-    c.firstOk += f.analysis.correct ? 1 : 0;
-    c.lastOk += l.analysis.correct ? 1 : 0;
+    c.firstOk += fOk ? 1 : 0;
+    c.lastOk += lOk ? 1 : 0;
     c.retried ||= f.id !== l.id;
     concepts.set(conceptOf(l), c);
   }
@@ -124,7 +127,10 @@ export type Period = { from?: number; to?: number }; // ms, 둘 다 포함. 비�
 // 한 반의 지표. assignmentId 가 없으면 그 반의 공개된 모든 과제 문항이 대상
 // period 를 주면 그 기간에 제출한 풀이만으로 계산한다 (정답률·반복 오류·학습 변화 모두)
 export async function computeClassStats(cls: ClassInfo, assignmentId: string | null, period: Period = {}): Promise<ClassStats> {
-  const [all, allSubs, roster] = await Promise.all([listAssignments(), listSubmissions(), classMembers(cls.id)]);
+  // 풀이는 이 반 학생 것만 DB 에서 읽는다 (4초마다 불리므로 전교생 풀이를 읽고 거르지 않게).
+  // 과제는 전체가 필요하다: 아래 legacy(과제가 지워진 예전 시연 문항) 판단에 다른 반 과제까지 본다
+  const [all, roster] = await Promise.all([listAssignments(), classMembers(cls.id)]);
+  const allSubs = await listSubmissions({ studentIds: roster.map((s) => s.id) });
   const subs = allSubs.filter(
     (s) => (period.from === undefined || s.submittedAt >= period.from) && (period.to === undefined || s.submittedAt <= period.to),
   );

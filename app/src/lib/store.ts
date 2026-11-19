@@ -131,14 +131,17 @@ export async function getSubmission(id: string): Promise<Submission | null> {
 }
 
 // 목록: 무거운 필드(필기 획 좌표, OCR 원본 응답)는 빼고 가져온다
-export async function listSubmissions(filter: { studentId?: string } = {}): Promise<Submission[]> {
+//  studentId: 학생 한 명 / studentIds: 여러 학생 (반 명단. 비어 있으면 아무 풀이도 없음) / 둘 다 없으면 전체
+export async function listSubmissions(filter: { studentId?: string; studentIds?: string[] } = {}): Promise<Submission[]> {
+  if (filter.studentIds && !filter.studentIds.length) return [];
   const rows = await query<Row>(
     `SELECT s.id, s.student_id, s.problem_id, s.question, s.started_at, s.submitted_at, s.events, s.ocr_lines,
             s.status, s.status_message, s.analysis, s.teacher, ${ORIGIN_COLUMNS}
        ${WITH_ORIGIN}
       WHERE ($1::text IS NULL OR s.student_id = $1)
+        AND ($2::text[] IS NULL OR s.student_id = ANY($2))
       ORDER BY s.submitted_at DESC`,
-    [filter.studentId ?? null],
+    [filter.studentId ?? null, filter.studentIds ?? null],
   );
   return rows.map(toSubmission);
 }
