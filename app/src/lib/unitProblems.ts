@@ -29,6 +29,8 @@ const NOT_YET: Record<number, string> = {
   3: "",
   // 고1 (공통수학1·2): 고2 이후 내용
   4: "지수·로그, 삼각함수, 수열, 극한, 미분·적분, 조건부확률·확률분포·통계적 추정, 벡터·이차곡선",
+  // 고2 (대수·미적분Ⅰ·확률과 통계): 미적분Ⅱ·기하 내용
+  5: "수열의 극한·급수, 지수·로그·삼각함수의 미분과 적분, 몫의 미분법·합성함수의 미분법·치환적분·부분적분, 삼각함수의 덧셈정리, 이차곡선, 벡터, 공간좌표",
 };
 
 // 코드로 거르는 학년 범위: 중1·중2 는 √(제곱근)을 아직 안 배운다
@@ -124,6 +126,13 @@ async function aiRound(grade: number, unitName: string, lessonName: string, desc
 - 학생이 손으로 쓰기 쉬운 표기로 쓴다: 허수단위는 i, 거듭제곱은 x^2, 제곱근은 √(-9), 순열·조합은 5P2·5C2, 집합은 {1, 2, 3}, 행렬은 [[1, 2], [3, 4]].
 - LaTeX($, \\sqrt, \\bar, \\frac 등)는 화면에 그대로 보이니 쓰지 않는다. 켤레복소수는 "z 의 켤레복소수" 처럼 말로 쓴다.
 - 복소수·행렬·집합처럼 숫자 하나로 계산할 수 없는 검산은 checks 에 넣지 않는다 (빈 배열이면 다음 단계에서 다시 풀어 검산한다).`
+      : ""
+  }${
+    grade >= 5
+      ? `
+- 고2 표기: 로그는 log_2 8, 상용로그는 log 2, 지수는 2^(x+1), 거듭제곱근은 ³√8, 삼각함수는 sin x·cos(π/3)·sin^2 θ, 수열은 a_n·S_n, 합은 Σ_(k=1)^(n) (2k - 1), 극한은 lim_(x→2) f(x), 도함수는 f'(x), 적분은 ∫_(0)^(2) (3x^2 + 1) dx, 중복조합은 3H2, 조건부확률은 P(B|A), 정규분포는 N(50, 4^2).
+- 미분·적분은 다항함수만 쓴다. 정규분포·추정 문제에 필요한 표준정규분포표 값(예: P(0 ≤ Z ≤ 1) = 0.3413)은 문제에 함께 쓴다.
+- checks 에는 sin( ) cos( ) tan( ) (라디안, 예: sin(pi/6)), log(밑, 진수) (예: log(2, 8)), 상용로그 log(100) 도 쓸 수 있다. 극한·미분·적분·Σ 는 값을 미리 계산해서 숫자로 쓴다 (예: 정적분 ∫_(0)^(2) 3x^2 dx = 8 → "2^3 - 0^3 == 8").`
       : ""
   }
 ${FIGURE_PROMPT}
@@ -263,7 +272,7 @@ export function checkHolds(expr: string): boolean | null {
   return Math.abs(l - r) <= 1e-6 * Math.max(1, Math.abs(l), Math.abs(r));
 }
 
-// 숫자 · + - * / ^ · 괄호 · pi · sqrt() 만 읽는 계산기 (eval 을 쓰지 않는다)
+// 숫자 · + - * / ^ · 괄호 · pi · sqrt() · sin() cos() tan() (라디안) · log(밑, 진수)/log(x) 만 읽는 계산기 (eval 을 쓰지 않는다)
 export function evalArith(src: string): number | null {
   const s = src.replace(/π/g, "pi").replace(/×/g, "*").replace(/÷/g, "/").replace(/\s+/g, "");
   let i = 0;
@@ -305,6 +314,28 @@ export function evalArith(src: string): number | null {
       const v = expr();
       if (s[i++] !== ")") throw new Error("괄호");
       return Math.sqrt(v);
+    }
+    // 고2 검산: 삼각함수 (라디안)
+    const trig = /^(sin|cos|tan)\(/.exec(s.slice(i));
+    if (trig) {
+      i += 4;
+      const v = expr();
+      if (s[i++] !== ")") throw new Error("괄호");
+      return trig[1] === "sin" ? Math.sin(v) : trig[1] === "cos" ? Math.cos(v) : Math.tan(v);
+    }
+    // log(밑, 진수) 또는 상용로그 log(x)
+    if (s.startsWith("log(", i)) {
+      i += 4;
+      const a = expr();
+      let v = Math.log10(a);
+      if (peek() === ",") {
+        i++;
+        const x = expr();
+        if (!(a > 0 && a !== 1 && x > 0)) throw new Error("로그");
+        v = Math.log(x) / Math.log(a);
+      } else if (!(a > 0)) throw new Error("로그");
+      if (s[i++] !== ")") throw new Error("괄호");
+      return v;
     }
     const m = /^\d+(\.\d+)?/.exec(s.slice(i));
     if (!m) throw new Error("숫자");
