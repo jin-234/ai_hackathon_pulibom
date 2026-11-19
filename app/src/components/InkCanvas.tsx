@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { InkEvent, Point, Stroke } from "@/lib/types";
 
 // 태블릿 필기 칸 (도구 버튼은 바깥 화면이 갖고, 이 칸은 쓰는 면만)
@@ -11,6 +11,8 @@ import type { InkEvent, Point, Stroke } from "@/lib/types";
 //   펜슬이 보내는 촘촘한 좌표(getCoalescedEvents)를 다 쓰고, 곡선으로 이어서 끊김 없이 그린다.
 //   iPad 기본 제스처(스크리블·확대·길게 누르기)가 획을 끊지 않게 펜슬 터치 기본 동작을 막는다.
 //   손가락은 막지 않는다: 손가락으로 밀면 칸이 위아래로 움직인다
+// - 확대: 두 손가락으로 벌리고 오므리면 칸이 커지고 작아진다 (굿노트처럼, 1~3배). 확대한 채로 펜슬로 쓰고,
+//   손가락으로 밀어 옮긴다. 그리기 좌표는 그대로라 확대해도 획 데이터·AI 읽기는 같다
 // - 지우개: 화면만 가리는 게 아니라 지우개 원과 만나는 경계에서 획 자체를 잘라 나눈다
 //   (서버 OCR 은 획 좌표로 다시 그려 읽으므로, 지운 부분이 데이터에도 남지 않아야 한다)
 
@@ -118,11 +120,12 @@ function cutStroke(pts: Point[], c: { x: number; y: number }, r: number): Point[
   return touched ? out : null;
 }
 
-// 화면 픽셀 밀도에 맞춰 캔버스 해상도를 올린다 (그리기 좌표는 그대로 W×h)
-// 칸이 길어져도 캔버스 크기 상한을 넘지 않게 밀도를 낮춘다
-function sizeCanvas(c: HTMLCanvasElement | null, h: number) {
+// 화면 픽셀 밀도(확대했으면 그만큼 더)에 맞춰 캔버스 해상도를 올린다 (그리기 좌표는 그대로 W×h)
+// 칸이 길어지거나 크게 확대해도 캔버스 크기 상한을 넘지 않게 밀도를 낮춘다
+const MAX_ZOOM = 3;
+function sizeCanvas(c: HTMLCanvasElement | null, h: number, zoom = 1) {
   if (!c) return null;
-  const dpr = Math.min(window.devicePixelRatio || 1, 3, Math.sqrt(16_000_000 / (W * h)));
+  const dpr = Math.min((window.devicePixelRatio || 1) * zoom, 3 * zoom, Math.sqrt(16_000_000 / (W * h)));
   if (c.width !== Math.round(W * dpr) || c.height !== Math.round(h * dpr)) {
     c.width = Math.round(W * dpr);
     c.height = Math.round(h * dpr);
@@ -165,6 +168,14 @@ const InkCanvas = forwardRef<
   const [fingerHint, setFingerHint] = useState(false);
   const hintTimer = useRef(0);
   const [atTop, setAtTop] = useState(true);
+  // 확대: zoom 은 화면 크기(두 손가락으로 바꾸는 중에도 바로), sharpZoom 은 캔버스 해상도(손을 뗀 뒤 맞춘다)
+  const [zoom, setZoom] = useState(1);
+  const zoomRef = useRef(1);
+  zoomRef.current = zoom;
+  const [sharpZoom, setSharpZoom] = useState(1);
+  const sharpRef = useRef(1);
+  sharpRef.current = sharpZoom;
+  const pendingScroll = useRef<{ left: number; top: number } | null>(null);
   // 칸 수: 쓴 만큼 늘어나고, 보이는 높이보다는 늘 조금 더 길게 (밀어서 아래 칸이 있는 걸 알 수 있게)
   const [rowH, setRowH] = useState(DEFAULT_ROW_H); // 칸 높이 (그리기 좌표)
   const rowHRef = useRef(rowH);
@@ -199,7 +210,7 @@ const InkCanvas = forwardRef<
 
   const redraw = useCallback(
     (list: Stroke[]) => {
-      const ctx = sizeCanvas(canvasRef.current, hRef.current);
+      const ctx = sizeCanvas(canvasRef.current, hRef.current, sharpRef.current);
       if (!ctx) return;
       ctx.clearRect(0, 0, W, hRef.current);
       paint(ctx, list);
@@ -208,7 +219,17 @@ const InkCanvas = forwardRef<
   );
 
   // 칸이 늘어나면 캔버스 크기가 바뀌어 지워지므로 다시 그린다
-  useEffect(() => redraw(strokes), [strokes, rows, redraw]);
+  useEffect(() => redraw(strokes), [strokes, rows, sharpZoom, redraw]);
+
+  // 확대하면서 두 손가락 가운데가 제자리에 있도록 스크롤을 맞춘다 (크기가 바뀐 뒤 바로)
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const p = pendingScroll.current;
+    if (!el || !p) return;
+    pendingScroll.current = null;
+    el.scrollLeft = p.left;
+    el.scrollTop = p.top;
+  }, [zoom]);
 
   // 보이는 높이 재기 (칸 너비 = 그리기 좌표 W)
   useEffect(() => {
@@ -255,7 +276,7 @@ const InkCanvas = forwardRef<
   const drawLive = useCallback(() => {
     frameRef.current = 0;
     if (erasingRef.current && workRef.current) redraw(workRef.current);
-    const ctx = sizeCanvas(liveRef.current, hRef.current);
+    const ctx = sizeCanvas(liveRef.current, hRef.current, sharpRef.current);
     if (!ctx) return;
     ctx.clearRect(0, 0, W, hRef.current);
     if (drawingRef.current) paint(ctx, [drawingRef.current]);
@@ -280,17 +301,52 @@ const InkCanvas = forwardRef<
   useEffect(() => {
     const c = liveRef.current;
     if (!c) return;
-    const stop = (e: TouchEvent) => {
-      if (Array.from(e.changedTouches).some((t) => (t as Touch & { touchType?: string }).touchType === "stylus")) e.preventDefault();
+    const isStylus = (t: Touch) => (t as Touch & { touchType?: string }).touchType === "stylus";
+    // 두 손가락 확대: 처음 벌린 거리·배율·가운데 점을 기억해 두고, 움직일 때마다 배율과 스크롤을 맞춘다
+    let pinch: { d0: number; z0: number; cx: number; cy: number } | null = null;
+    const fingers = (e: TouchEvent) => Array.from(e.touches).filter((t) => !isStylus(t));
+    const mid = (a: Touch, b: Touch) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2, d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) });
+    const onTouch = (e: TouchEvent) => {
+      if (Array.from(e.changedTouches).some(isStylus)) e.preventDefault();
+      const f = fingers(e);
+      const el = scrollRef.current;
+      if (!el) return;
+      if (f.length >= 2) {
+        e.preventDefault(); // 화면 전체 확대·스크롤 대신 이 칸만 확대
+        const m = mid(f[0], f[1]);
+        const box = el.getBoundingClientRect();
+        if (!pinch) {
+          // 가운데 점이 칸 안에서 가리키는 자리 (확대 전 크기 기준)
+          const z0 = zoomRef.current;
+          pinch = { d0: m.d || 1, z0, cx: (el.scrollLeft + m.x - box.left) / z0, cy: (el.scrollTop + m.y - box.top) / z0 };
+          return;
+        }
+        const z = Math.min(MAX_ZOOM, Math.max(1, (pinch.z0 * m.d) / pinch.d0));
+        pendingScroll.current = { left: pinch.cx * z - (m.x - box.left), top: pinch.cy * z - (m.y - box.top) };
+        if (z !== zoomRef.current) setZoom(z);
+        else {
+          el.scrollLeft = pendingScroll.current.left;
+          el.scrollTop = pendingScroll.current.top;
+          pendingScroll.current = null;
+        }
+      } else if (pinch && e.type !== "touchmove") {
+        pinch = null;
+        // 손을 떼면 그 배율에 맞춰 캔버스를 선명하게 다시 그린다 (거의 원래 크기면 딱 맞춘다)
+        if (zoomRef.current < 1.05) setZoom(1);
+        setSharpZoom(zoomRef.current < 1.05 ? 1 : zoomRef.current);
+      }
     };
     const opts = { passive: false } as const;
-    c.addEventListener("touchstart", stop, opts);
-    c.addEventListener("touchmove", stop, opts);
-    c.addEventListener("touchend", stop, opts);
+    const box = c.closest("[data-ink-zoom]") ?? c;
+    box.addEventListener("touchstart", onTouch as EventListener, opts);
+    box.addEventListener("touchmove", onTouch as EventListener, opts);
+    box.addEventListener("touchend", onTouch as EventListener, opts);
+    box.addEventListener("touchcancel", onTouch as EventListener, opts);
     return () => {
-      c.removeEventListener("touchstart", stop);
-      c.removeEventListener("touchmove", stop);
-      c.removeEventListener("touchend", stop);
+      box.removeEventListener("touchstart", onTouch as EventListener);
+      box.removeEventListener("touchmove", onTouch as EventListener);
+      box.removeEventListener("touchend", onTouch as EventListener);
+      box.removeEventListener("touchcancel", onTouch as EventListener);
       cancelAnimationFrame(frameRef.current);
     };
   }, []);
@@ -348,8 +404,16 @@ const InkCanvas = forwardRef<
     workRef.current = list;
   };
 
+  // 손가락 톡 대기 판별: 움직이지 않았고 한 손가락이었을 때만 펜슬 안내 (확대·밀기 뒤에는 안 띄운다)
+  const tapRef = useRef<{ x: number; y: number; multi: boolean; n: number }>({ x: 0, y: 0, multi: false, n: 0 });
   const onDown = (e: React.PointerEvent) => {
-    if (ignore(e)) return; // 손가락: 밀면 칸이 움직이고, 톡 대면(onUp) 펜슬로 쓰라고 알려 준다
+    if (ignore(e)) {
+      const t = tapRef.current;
+      t.n += 1;
+      if (t.n === 1) Object.assign(t, { x: e.clientX, y: e.clientY, multi: false });
+      else t.multi = true;
+      return; // 손가락: 밀면 칸이 움직이고, 톡 대면(onUp) 펜슬로 쓰라고 알려 준다
+    }
     if (drawingRef.current) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     onActive?.();
@@ -386,7 +450,10 @@ const InkCanvas = forwardRef<
   const onUp = (e: React.PointerEvent) => {
     if (ignore(e)) {
       // 밀지 않고 톡 대기만 했으면 펜슬로 쓰라고 잠깐 알려 준다 (밀면 pointercancel 로 온다)
-      if (e.type === "pointerup") {
+      const t = tapRef.current;
+      t.n = Math.max(0, t.n - 1);
+      const tap = !t.multi && Math.hypot(e.clientX - t.x, e.clientY - t.y) < 10;
+      if (e.type === "pointerup" && tap) {
         setFingerHint(true);
         clearTimeout(hintTimer.current);
         hintTimer.current = window.setTimeout(() => setFingerHint(false), 1800);
@@ -409,7 +476,7 @@ const InkCanvas = forwardRef<
     drawingRef.current = null;
     if (!s) return;
     // 다 쓴 획은 아래 캔버스로 바로 옮기고 위 캔버스는 비운다 (깜빡임 없게)
-    const base = sizeCanvas(canvasRef.current, hRef.current);
+    const base = sizeCanvas(canvasRef.current, hRef.current, sharpRef.current);
     if (base) paint(base, [s]);
     drawLive();
     eventsRef.current.push({ type: "add", strokeId: s.id, t: Date.now() });
@@ -436,7 +503,9 @@ const InkCanvas = forwardRef<
     getStrokes: () => strokes,
     reset: (next = []) => {
       eventsRef.current = [];
-      scrollRef.current?.scrollTo({ top: 0 });
+      scrollRef.current?.scrollTo({ top: 0, left: 0 });
+      setZoom(1);
+      setSharpZoom(1);
       setBaseRows(rowsFor(next, START_ROWS, rowHRef.current));
       setStrokes(next);
       setHistory([]);
@@ -458,15 +527,20 @@ const InkCanvas = forwardRef<
 
   const lined = variant === "lined";
   return (
-    <div className={`relative h-full w-full overflow-hidden rounded-[1.75rem] border border-line ${lined ? "bg-[#fffdf8]" : "bg-[#f6f1e4]"}`}>
+    <div
+      data-ink-zoom
+      className={`relative h-full w-full overflow-hidden rounded-[1.75rem] border border-line ${lined ? "bg-[#fffdf8]" : "bg-[#f6f1e4]"}`}
+    >
       <div
         ref={scrollRef}
         onScroll={(e) => setAtTop(e.currentTarget.scrollTop < 24)}
-        className="h-full w-full overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className={`h-full w-full overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${zoom > 1 ? "overflow-auto" : "overflow-y-auto overflow-x-hidden"}`}
       >
+        {/* 확대하면 칸 너비가 배율만큼 커진다 (높이는 비율대로). 그리기 좌표는 그대로 */}
         <div
           className="relative"
           style={{
+            width: `${zoom * 100}%`,
             aspectRatio: `${W}/${h}`,
             ...(lined ? {} : { backgroundImage: "radial-gradient(circle, #ddd3bd 1px, transparent 1.2px)", backgroundSize: "22px 22px" }),
           }}
@@ -499,7 +573,7 @@ const InkCanvas = forwardRef<
             width={W}
             height={h}
             className="absolute inset-0 block h-full w-full select-none"
-            style={{ cursor: tool === "eraser" ? "cell" : "crosshair", touchAction: "pan-y", WebkitTouchCallout: "none", WebkitUserSelect: "none" }}
+            style={{ cursor: tool === "eraser" ? "cell" : "crosshair", touchAction: zoom > 1 ? "pan-x pan-y" : "pan-y", WebkitTouchCallout: "none", WebkitUserSelect: "none" }}
             onPointerDown={onDown}
             onPointerMove={onMove}
             onPointerUp={onUp}
@@ -514,10 +588,22 @@ const InkCanvas = forwardRef<
       >
         ✏️ 애플펜슬로 써 주세요
       </div>
+      {/* 확대 중: 배율 표시, 누르면 원래 크기로 */}
+      {zoom > 1 && (
+        <button
+          onClick={() => {
+            setZoom(1);
+            setSharpZoom(1);
+          }}
+          className="absolute right-3 top-3 rounded-full border border-line bg-paper/95 px-3 py-1 text-xs font-semibold text-ink shadow-sm"
+        >
+          {Math.round(zoom * 100)}% · 원래 크기
+        </button>
+      )}
       {/* 아래 칸이 더 있다는 표시 (맨 위에 있을 때만) */}
       <div
         className={`pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-paper/90 px-3 py-1 text-xs text-muted shadow-sm transition-opacity duration-300 ${
-          atTop ? "opacity-100" : "opacity-0"
+          atTop && zoom === 1 ? "opacity-100" : "opacity-0"
         }`}
       >
         ↓ 손가락으로 밀면 아래 칸이 더 있어요
@@ -542,7 +628,18 @@ export function InkToolPill({
   thick: boolean;
   setThick: (b: boolean) => void;
 }) {
-  const toolBtn = (t: InkTool, label: string, icon: ReactNode) => (
+  // 애플펜슬 더블탭(아이패드 앱이 보내 줌): 지우개 ↔ 직전 도구
+  const lastDrawTool = useRef<InkTool>(tool === "eraser" ? "pen" : tool);
+  if (tool !== "eraser") lastDrawTool.current = tool;
+  const toolRef = useRef(tool);
+  toolRef.current = tool;
+  useEffect(() => {
+    const onTap = () => setTool(toolRef.current === "eraser" ? lastDrawTool.current : "eraser");
+    window.addEventListener("pulibom:pencil-tap", onTap);
+    return () => window.removeEventListener("pulibom:pencil-tap", onTap);
+  }, [setTool]);
+
+  const toolBtn =(t: InkTool, label: string, icon: ReactNode) => (
     <button
       key={t}
       title={label}

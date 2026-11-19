@@ -226,8 +226,15 @@ export default function StudentApp({
     const next = idx + (dx < 0 ? 1 : -1);
     return next >= 0 && next < PROBLEMS.length ? next : null;
   };
+  const touchesRef = useRef(0); // 화면에 닿은 손가락 수 (두 손가락이면 확대라서 넘기지 않는다)
   const onSwipeStart = (e: React.PointerEvent) => {
-    if (e.pointerType !== "touch" || swipeRef.current) return;
+    if (e.pointerType !== "touch") return;
+    touchesRef.current += 1;
+    if (touchesRef.current > 1) {
+      if (swipeRef.current) setSlide({ x: 0, anim: true });
+      swipeRef.current = null;
+      return;
+    }
     swipeRef.current = { id: e.pointerId, x: e.clientX, y: e.clientY, locked: false };
   };
   const onSwipeMove = (e: React.PointerEvent) => {
@@ -244,6 +251,7 @@ export default function StudentApp({
     setSlide({ x: swipeTarget(dx) === null ? dx * 0.25 : dx, anim: false });
   };
   const onSwipeEnd = (e: React.PointerEvent) => {
+    if (e.pointerType === "touch") touchesRef.current = Math.max(0, touchesRef.current - 1);
     const st = swipeRef.current;
     if (!st || st.id !== e.pointerId) return;
     swipeRef.current = null;
