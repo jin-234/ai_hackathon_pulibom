@@ -129,7 +129,14 @@ export default function StudentDetail({
         )}
       </div>
 
-      {showMessages && <MessageThread studentId={id} studentName={name ?? "학생"} />}
+      {showMessages && (
+        <MessageThread
+          studentId={id}
+          studentName={name ?? "학생"}
+          // 개념 영상 찾기: 많이 틀린 개념 · 반복 오류 유형
+          concepts={[student?.weakConcept ?? "", student?.repeatedError ? ERROR_LABEL[student.repeatedError] : ""]}
+        />
+      )}
 
       {loadError && <div className="rounded-2xl bg-salmon-soft px-4 py-2.5 text-sm text-[#b5624f]">{loadError}</div>}
       {info?.access === "past" && (

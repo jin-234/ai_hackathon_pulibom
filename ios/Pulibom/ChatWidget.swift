@@ -110,6 +110,10 @@ struct ChatWidget: View {
                     .padding(.vertical, 9)
                     .background(m.mine ? Color.honey : Color.paper, in: BubbleShape(mine: m.mine))
                     .overlay { if !m.mine { BubbleShape(mine: false).stroke(Color.line, lineWidth: 1) } }
+                // 선생님이 보낸 영상 링크·학습 자료: 누르면 유튜브 앱이나 Safari 에서 열린다
+                ForEach(m.attachments ?? [], id: \.self) { a in
+                    attachmentLink(a)
+                }
                 Text(time(m.createdAt) + (m.mine && m.readAt != nil ? " · 읽음" : ""))
                     .font(.caption2)
                     .foregroundStyle(Color.muted)
@@ -117,6 +121,37 @@ struct ChatWidget: View {
             }
             if !m.mine { Spacer(minLength: 48) }
         }
+    }
+
+    @ViewBuilder
+    private func attachmentLink(_ a: ChatAttachment) -> some View {
+        if let url = URL(string: a.url, relativeTo: server)?.absoluteURL {
+            Link(destination: url) {
+                HStack(spacing: 8) {
+                    Image(systemName: a.kind == "file" ? "doc.fill" : (a.youtubeId != nil ? "play.rectangle.fill" : "link"))
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(a.youtubeId != nil ? Color.red : Color.honeyDeep)
+                    Text(attachmentLabel(a))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.ink)
+                        .lineLimit(1)
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.muted)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.line, lineWidth: 1))
+            }
+            .accessibilityLabel(attachmentLabel(a))
+        }
+    }
+
+    private func attachmentLabel(_ a: ChatAttachment) -> String {
+        if a.kind == "file" { return "📎 " + (a.name ?? "파일") }
+        if a.youtubeId != nil { return "유튜브 영상 보기" }
+        return URL(string: a.url)?.host() ?? a.url
     }
 
     private var input: some View {

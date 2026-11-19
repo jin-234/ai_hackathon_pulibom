@@ -16,7 +16,20 @@ struct ChatMessage: Decodable, Identifiable, Equatable {
     let body: String
     let createdAt: Double
     let readAt: Double?
+    // 선생님이 붙인 학습 자료 (유튜브·웹 링크, 파일). 예전 서버 응답에는 없을 수 있어 옵셔널
+    let attachments: [ChatAttachment]?
     var mine: Bool { sender == "student" }
+}
+
+// 메시지 첨부 (app/src/lib/messages.ts 의 Attachment)
+//  link: url 은 전체 주소, youtubeId 가 있으면 유튜브 영상
+//  file: url 은 '/api/message-files/<id>?t=<token>' (서버 주소 기준. 로그인 없이 Safari 로 열린다)
+struct ChatAttachment: Decodable, Equatable, Hashable {
+    let kind: String // "link" | "file"
+    let url: String
+    let youtubeId: String?
+    let name: String?
+    let size: Int?
 }
 
 struct LoggedInStudent: Equatable {
