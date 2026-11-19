@@ -4,6 +4,8 @@ import { ERROR_LABEL, LOW_OCR_CONFIDENCE, variableOf } from "./types";
 export { variableOf };
 import { env } from "./env";
 import { linearForm, solveLinear } from "./equation";
+import { gradeName } from "./curriculum";
+import { describeFigure } from "./figure";
 
 // AI 호출 모음. 모델은 .env 로 교체 가능하게 둔다.
 //   ANALYSIS_BASE_URL / ANALYSIS_MODEL / ANALYSIS_API_KEY 를 바꾸면
@@ -142,8 +144,8 @@ export function restoreMissingX(line: string): string {
   return m ? `${m[1]}${m[2]}x${m[4]}` : line;
 }
 
-export async function correctOcr(ocrLines: string[], fractions: number[] = [], isEquation = false, v = "x"): Promise<string[]> {
-  const fixed = await correctOcrLines(ocrLines, fractions, v);
+export async function correctOcr(ocrLines: string[], fractions: number[] = [], isEquation = false, v = "x", grade?: number | null): Promise<string[]> {
+  const fixed = await correctOcrLines(ocrLines, fractions, v, grade);
   // x 가 숫자로 읽힌 줄 되돌리기는 x 문항만 (다른 글자는 숫자와 헷갈리는 모양이 다르다)
   if (!isEquation || v !== "x") return fixed;
   return fixed.map((l) => {
@@ -164,8 +166,14 @@ const LOOKALIKE: Record<string, string> = {
   i: `i 를 '1', 'l', 'I', '|', 'j', '!', 'ì', 'ㅣ' 등으로 읽는다. 계수와 붙으면 '2i'가 '21' 처럼 보이기도 한다.`,
 };
 
-async function correctOcrLines(ocrLines: string[], fractions: number[], v: string): Promise<string[]> {
-  const system = `너는 손글씨 수식 OCR 결과의 글자 오인식만 고치는 교정기다. 내용은 중학교 수학 풀이다: 일차방정식, 정수·분수 계산, 문자식 간단히 하기, □ 구하기.
+// 학년별로 풀이에 나오는 내용 (OCR 보정이 낯선 기호를 엉뚱하게 고치지 않게)
+const OCR_CONTENT = (grade?: number | null) =>
+  (grade ?? 1) >= 4
+    ? "고등학교 1학년 수학 풀이다: 다항식의 연산·인수분해(x^2, (x+1)(x-2)), 복소수(i 는 허수단위일 수 있다), 이차방정식·부등식(<, ≤), 순열·조합(5P2, 5C2), 집합({1,2}), 함수 f(x), 도형의 방정식."
+    : "중학교 수학 풀이다: 일차방정식, 정수·분수 계산, 문자식 간단히 하기, □ 구하기, 거듭제곱·제곱근.";
+
+async function correctOcrLines(ocrLines: string[], fractions: number[], v: string, grade?: number | null): Promise<string[]> {
+  const system = `너는 손글씨 수식 OCR 결과의 글자 오인식만 고치는 교정기다. 내용은 ${OCR_CONTENT(grade)}
 ${
     v
       ? `이 문항의 미지수(문자)는 ${v} 하나뿐이다. 다른 영문자로 바꾸지 말고, 문자로 보이는 것은 ${v} 로 쓴다.\n${LOOKALIKE[v] ?? LOOKALIKE.x}`
@@ -351,12 +359,13 @@ export async function analyzeSolution(input: {
   ocrMarks?: { line: number | null; kind: "cancel" | "strike" }[]; // 획에서 찾은 빗금 (약분 표시 · 줄을 그어 지운 흔적)
   durationSec: number;
   erases: number;
+  grade?: number | null; // 학생 반의 학년 (1~3 중학교, 4 고1). 프롬프트의 학년·OCR 보정 내용에 쓴다
 }): Promise<Analysis> {
   const { problem, ocrLines, durationSec, erases } = input;
   // 미지수 글자와 방정식 문항인지 (문장제는 정답이 'x=…' 인 것): 방정식이면 x 가 빠진 줄을 되돌릴 수 있다
   const v = variableOf(problem);
   const isEquation = !!v && ((problem.question.includes(v) && problem.question.includes("=") && !problem.free) || new RegExp(`^${v}=`).test(problem.answer.replace(/\s/g, "")));
-  const correctedLines = ocrLines.length ? await correctOcr(ocrLines, input.ocrFractions, isEquation, v) : [];
+  const correctedLines = ocrLines.length ? await correctOcr(ocrLines, input.ocrFractions, isEquation, v, input.grade) : [];
   // 인식 불확실: OCR 신뢰도가 낮거나, 보정 후에도 획에서 찾은 분수만큼 '/' 가 없는 줄
   const lowConf = ocrLines.map(
     (_, i) =>
@@ -368,7 +377,7 @@ export async function analyzeSolution(input: {
     .map((k) => `- ${PICK_TYPES.has(k) ? "★ " : ""}${k} (${ERROR_LABEL[k]}): ${ERROR_GUIDE[k]}`)
     .join("\n");
 
-  const system = `너는 중학교 1학년 수학 교사를 돕는 풀이 채점·분석 도우미다.
+  const system = `너는 ${input.grade ? gradeName(input.grade) : "중·고등학교"} 수학 교사를 돕는 풀이 채점·분석 도우미다.
 교사가 풀이를 하나하나 다 볼 수 없으니, 네가 대신 풀이를 읽고 어디서 틀렸는지, 어떤 종류의 실수인지 분류해 둔다.
 이 분류를 모아서 "누구는 뺄셈·부호가 약하고, 누구는 등식 변형이 약하다"를 파악하는 데 쓴다. 그래서 분류는 일관되고 정확해야 한다.
 
@@ -413,7 +422,7 @@ ${codes}
 - 반드시 JSON 하나만 출력한다.`;
 
   const checks = checkLines(correctedLines, v, isEquation && !problem.free ? problem.question : undefined);
-  const user = `[문제] ${problem.question}
+  const user = `[문제] ${problem.question}${problem.figure ? `\n[그림] ${describeFigure(problem.figure)}` : ""}
 [정답] ${problem.answer || "(교사 미입력: 문제를 직접 풀어서 판단하고, 확신이 없으면 needsReview=true)"}
 [교사 검토 해설]
 ${problem.solution.length ? problem.solution.map((s, i) => `${i + 1}. ${s}`).join("\n") : "(없음)"}
