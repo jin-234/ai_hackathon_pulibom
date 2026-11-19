@@ -95,9 +95,12 @@ assets/   이미지·시연 자료
 
 ## Git 명령어
 
+`main`에 직접 push하지 말고 브랜치 → PR로 작업. 자세한 건 [`브랜치규칙.md`](브랜치규칙.md)
+
 ```bash
 git clone https://github.com/jin-234/ai_hackathon_pulibom.git
-git pull                       # 작업 전 항상
-git add . && git commit -m "메시지"
-git push
+git checkout main && git pull            # 작업 전 항상
+git checkout -b feat/영역-내용            # 예: feat/student-canvas
+git add . && git commit -m "feat: 메시지"
+git push -u origin feat/영역-내용         # → GitHub에서 PR
 ```
