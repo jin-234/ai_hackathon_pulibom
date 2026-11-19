@@ -2,12 +2,13 @@
 import FigureView from "@/components/FigureView";
 import QuestionText from "@/components/QuestionText";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import AiSummary from "@/components/AiSummary";
 import ConceptUnderstanding from "@/components/ConceptUnderstanding";
 import LearningProfileCard from "@/components/LearningProfileCard";
 import MessageThread from "@/components/MessageThread";
 import SupplementPanel from "@/components/SupplementPanel";
+import { useLiveRefresh } from "@/components/useLiveRefresh";
 import { solveLinear } from "@/lib/equation";
 import { getProblem } from "@/lib/problems";
 import { correctOf } from "@/lib/verdict";
@@ -60,8 +61,8 @@ export default function StudentDetail({
       .catch(() => {});
   }, [id, stats, classId, subs.length]);
 
-  useEffect(() => {
-    const load = () =>
+  const load = useCallback(
+    () =>
       fetch(`/api/submissions?studentId=${encodeURIComponent(id)}`)
         .then((r) => r.json())
         .then((d: History | { error: string }) => {
@@ -70,11 +71,14 @@ export default function StudentDetail({
           setInfo({ student: d.student, access: d.access, classId: d.classId });
           setLoadError("");
         })
-        .catch(() => {});
+        .catch(() => {}),
+    [id],
+  );
+  useEffect(() => {
     load();
-    const t = setInterval(load, 4000);
-    return () => clearInterval(t);
-  }, [id]);
+  }, [load]);
+  // 이 학생의 풀이가 바뀌면 (제출·분석 완료·확인) 바로 다시 불러온다 (설정이 없으면 4초 폴링)
+  useLiveRefresh(`student:${id}`, load);
 
   const name = student?.name ?? info?.student.name;
   const current = info?.access === "current";
