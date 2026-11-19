@@ -368,7 +368,7 @@ export default function AssignPage() {
               <button
                 key={k}
                 onClick={() => setListState(k)}
-                className={`rounded-full px-3 py-1 ${listState === k ? "bg-ink font-semibold text-paper" : "border border-line text-muted hover:bg-sand"}`}
+                className={`rounded-full px-3 py-1 ${listState === k ? "bg-honey font-semibold text-ink" : "border border-line text-muted hover:bg-sand"}`}
               >
                 {label}
               </button>
