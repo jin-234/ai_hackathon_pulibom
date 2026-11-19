@@ -13,7 +13,7 @@ const REASON: Partial<Record<Submission["status"], { label: string; cls: string 
 };
 
 const isDone = (s: Submission) => Boolean(s.teacher?.confirmedAt);
-const when = (ms: number) => new Date(ms).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const when = (ms: number) => new Date(ms).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 // 오늘의 교실 '확인할 풀이' 탭: 반 전체에서 교사가 확인할 풀이 (AI가 판독하기 어려웠거나 분석에 실패한 풀이)
 //  왼쪽 목록(오래된 것부터) → 오른쪽에서 원본·인식 결과를 보고 오류 유형을 고르고 저장하면 다음 풀이로 넘어간다

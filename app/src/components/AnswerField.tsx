@@ -23,12 +23,15 @@ export default function AnswerField({
   onChange,
   onSubmit,
   disabled,
+  flushRef,
 }: {
   problemId: string;
   value: string;
   onChange: (v: string) => void;
   onSubmit: () => void;
   disabled?: boolean;
+  // 제출할 때 부른다: 아직 글자로 안 바꾼 필기를 바로 읽어서 최종 답을 돌려준다 (0.9초 기다리는 사이 제출하면 마지막 글자가 빠지므로)
+  flushRef?: { current: (() => Promise<string>) | null };
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -113,6 +116,10 @@ export default function AnswerField({
     clearTimeout(timerRef.current);
     clearTimeout(bubbleTimer.current);
   }, []);
+  // 객관식 문항으로 넘어가 칸이 사라지면 예전 칸의 값을 쓰지 않게
+  useEffect(() => () => {
+    if (flushRef) flushRef.current = null;
+  }, [flushRef]);
 
   const showBubble = (text: string) => {
     setBubble(text);
@@ -120,9 +127,28 @@ export default function AnswerField({
     bubbleTimer.current = window.setTimeout(() => setBubble(null), 3000);
   };
 
-  const recognize = async () => {
+  // 읽는 중인 요청은 하나만 (제출 때 다시 부르면 같은 획을 두 번 읽어 답이 겹쳐 붙지 않게, 그 요청을 기다린다)
+  const inflightRef = useRef<Promise<string> | null>(null);
+  const recognize = (): Promise<string> => {
+    if (inflightRef.current) return inflightRef.current;
+    const job = readInk().finally(() => {
+      inflightRef.current = null;
+    });
+    inflightRef.current = job;
+    return job;
+  };
+  // 남은 필기를 다 읽고 최종 답 (새로 쓴 획이 있으면 한 번 더)
+  const flush = async () => {
+    clearTimeout(timerRef.current);
+    endStroke();
+    for (let k = 0; k < 3 && (inflightRef.current || strokesRef.current.length); k++) await recognize();
+    return valueRef.current;
+  };
+  if (flushRef) flushRef.current = flush;
+
+  const readInk = async (): Promise<string> => {
     const sent = strokesRef.current;
-    if (!sent.length) return;
+    if (!sent.length) return valueRef.current;
     const forProblem = problemId;
     setReading(true);
     let text = "";
@@ -138,11 +164,15 @@ export default function AnswerField({
       else if (data.error) error = data.error;
     } catch {}
     // 읽는 동안 새로 쓴 획이 있으면 이 결과는 버린다 (곧 그 획까지 다시 읽는다)
-    if (forProblem !== problemId || strokesRef.current !== sent) return;
+    if (forProblem !== problemId || strokesRef.current !== sent) return valueRef.current;
     setReading(false);
     clearInk();
-    if (text) onChange((valueRef.current + text).slice(0, 100));
-    else showBubble(error);
+    if (text) {
+      const next = (valueRef.current + text).slice(0, 100);
+      valueRef.current = next; // 부모가 다시 그리기 전에 제출해도 이 값이 쓰이게
+      onChange(next);
+    } else showBubble(error);
+    return valueRef.current;
   };
 
   const point = (e: { clientX: number; clientY: number; timeStamp: number }): Point => {
@@ -211,7 +241,7 @@ export default function AnswerField({
     endStroke();
     redraw();
     clearTimeout(timerRef.current);
-    if (strokesRef.current.length) timerRef.current = window.setTimeout(recognize, IDLE_MS);
+    if (strokesRef.current.length) timerRef.current = window.setTimeout(() => void recognize(), IDLE_MS);
   };
 
   return (

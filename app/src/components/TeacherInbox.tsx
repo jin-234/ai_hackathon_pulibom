@@ -68,7 +68,7 @@ export default function TeacherInbox() {
                   {i.name}
                   {i.unread > 0 && <span className="rounded-full bg-[#e0614a] px-1.5 text-[10px] text-white">{i.unread}</span>}
                   <span className="ml-auto text-[10px] font-normal text-muted">
-                    {new Date(i.lastAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    {new Date(i.lastAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                   </span>
                 </span>
                 <span className={`block truncate text-xs ${i.unread > 0 ? "font-semibold text-ink" : "text-muted"}`}>
