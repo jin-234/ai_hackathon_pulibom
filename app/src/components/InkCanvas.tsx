@@ -630,18 +630,7 @@ export function InkToolPill({
   thick: boolean;
   setThick: (b: boolean) => void;
 }) {
-  // 애플펜슬 더블탭(아이패드 앱이 보내 줌): 지우개 ↔ 직전 도구
-  const lastDrawTool = useRef<InkTool>(tool === "eraser" ? "pen" : tool);
-  if (tool !== "eraser") lastDrawTool.current = tool;
-  const toolRef = useRef(tool);
-  toolRef.current = tool;
-  useEffect(() => {
-    const onTap = () => setTool(toolRef.current === "eraser" ? lastDrawTool.current : "eraser");
-    window.addEventListener("pulibom:pencil-tap", onTap);
-    return () => window.removeEventListener("pulibom:pencil-tap", onTap);
-  }, [setTool]);
-
-  const toolBtn =(t: InkTool, label: string, icon: ReactNode) => (
+  const toolBtn = (t: InkTool, label: string, icon: ReactNode) => (
     <button
       key={t}
       title={label}
