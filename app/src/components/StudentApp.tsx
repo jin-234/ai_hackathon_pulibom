@@ -1,9 +1,9 @@
 "use client";
-import QuestionText from "@/components/QuestionText";
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import AnswerField from "@/components/AnswerField";
 import Chick from "@/components/Chick";
 import InkCanvas, { type InkCanvasHandle } from "@/components/InkCanvas";
 import { ERROR_LABEL, formatDue, type AnalysisStatus, type ErrorType, type Problem, type Stroke } from "@/lib/types";
@@ -26,6 +26,8 @@ export type MyResult = {
   } | null;
   teacher: { errorType: ErrorType | null; confirmedAt: number; memo: string | null } | null; // 선생님이 확인했을 때만
   answer: string | null; // 정답
+  answerText: string | null; // 답안 칸에 쓴 답
+  answerCorrect: boolean | null; // 답안 칸 답이 정답과 같은지 (null: 비교할 수 없음)
   solution: string[]; // 단계별 해설
 };
 
@@ -45,6 +47,7 @@ export default function StudentApp({
   problems: PROBLEMS,
   initialDone = {},
   initialStrokes = {},
+  initialAnswers = {},
   closed = false,
   dueAt,
   results,
@@ -55,6 +58,7 @@ export default function StudentApp({
   problems: Problem[];
   initialDone?: Record<string, boolean>;
   initialStrokes?: Record<string, Stroke[]>; // 문항별 마지막으로 낸 풀이의 획 (다시 풀 때 그 위에서 고친다)
+  initialAnswers?: Record<string, string>; // 문항별 마지막으로 낸 답안 칸 답
   closed?: boolean;
   dueAt?: number;
   results?: Record<string, MyResult>;
@@ -71,6 +75,10 @@ export default function StudentApp({
   // 문항별 풀이: 마지막으로 낸 풀이로 시작하고, 다른 문항으로 넘어갈 때 쓰던 풀이도 여기에 남겨 둔다
   const inkRef = useRef<Record<string, Stroke[]>>({ ...initialStrokes });
   const problem = PROBLEMS[idx];
+  // 답안 칸: 문항별로 기억하고, 이 기기에 자동 저장 (제출하면 지운다)
+  const ansRef = useRef<Record<string, string>>({ ...initialAnswers });
+  const [answer, setAnswer] = useState(() => ansRef.current[problem.id] ?? "");
+  const answerKey = (problemId: string) => `pulibom:draft-answer:${studentId}:${problemId}`;
   // 자동 저장: 쓰는 중인 풀이를 이 기기에 저장해서, 앱을 껐다 켜도 이어서 쓸 수 있게 (제출하면 지운다)
   const draftKey = (problemId: string) => `pulibom:draft:${studentId}:${problemId}`;
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -81,9 +89,12 @@ export default function StudentApp({
       try {
         const raw = localStorage.getItem(draftKey(p.id));
         if (raw) inkRef.current[p.id] = JSON.parse(raw) as Stroke[];
+        const ans = localStorage.getItem(answerKey(p.id));
+        if (ans !== null) ansRef.current[p.id] = ans;
       } catch {}
     }
     canvas.current?.reset(inkRef.current[PROBLEMS[idx].id]);
+    setAnswer(ansRef.current[PROBLEMS[idx].id] ?? "");
     setDraftsLoaded(true);
     // 처음 한 번만 (이후엔 문항을 옮길 때 inkRef 로)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -92,6 +103,14 @@ export default function StudentApp({
     inkRef.current[problem.id] = strokes;
     try {
       localStorage.setItem(draftKey(problem.id), JSON.stringify(strokes));
+      setSavedAt(Date.now());
+    } catch {}
+  };
+  const saveAnswer = (v: string) => {
+    setAnswer(v);
+    ansRef.current[problem.id] = v;
+    try {
+      localStorage.setItem(answerKey(problem.id), v);
       setSavedAt(Date.now());
     } catch {}
   };
@@ -109,8 +128,10 @@ export default function StudentApp({
   const goto = (i: number) => {
     const cur = canvas.current?.getStrokes();
     if (cur) inkRef.current[problem.id] = cur;
+    ansRef.current[problem.id] = answer;
     setIdx(i);
     canvas.current?.reset(inkRef.current[PROBLEMS[i].id]);
+    setAnswer(ansRef.current[PROBLEMS[i].id] ?? "");
     setStartedAt(Date.now());
   };
 
@@ -126,18 +147,22 @@ export default function StudentApp({
     const data = canvas.current?.getData();
     if (!data) return;
     if (data.strokes.length === 0 && !confirm("풀이가 비어 있어요. 그래도 제출할까요?")) return;
+    const answerText = answer.trim();
+    if (!answerText && !confirm("답안 칸이 비어 있어요. 그래도 제출할까요?")) return;
     setSending(true);
     try {
       const res = await fetch("/api/submissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ problemId: problem.id, startedAt, submittedAt: Date.now(), ...data }),
+        body: JSON.stringify({ problemId: problem.id, startedAt, submittedAt: Date.now(), ...data, answerText }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "제출하지 못했어요.");
       setDone((d) => ({ ...d, [problem.id]: true }));
       inkRef.current[problem.id] = data.strokes;
+      ansRef.current[problem.id] = answerText;
       try {
         localStorage.removeItem(draftKey(problem.id));
+        localStorage.removeItem(answerKey(problem.id));
       } catch {}
       const n = nextUnsolved(idx);
       if (n !== null) goto(n);
@@ -269,7 +294,7 @@ export default function StudentApp({
               problem.free ? "py-5 text-left text-base leading-relaxed" : "py-10 text-center font-[family-name:var(--font-math)] text-4xl"
             }`}
           >
-            <QuestionText text={problem.question} />
+            {problem.question}
           </div>
           {problem.concept && (
             <span className="w-fit rounded-full bg-sand px-3 py-1 text-xs text-muted">{problem.concept}</span>
@@ -340,13 +365,16 @@ export default function StudentApp({
             initialStrokes={inkRef.current[problem.id]}
             onChange={draftsLoaded ? saveDraft : undefined}
             footerRight={
-              <button
-                onClick={submit}
-                disabled={sending || closed}
-                className="flex items-center gap-2 rounded-full bg-honey px-6 py-3.5 font-semibold text-ink shadow-sm transition hover:bg-honey-deep disabled:opacity-50"
-              >
-                {closed ? "마감된 과제예요" : sending ? "제출 중…" : done[problem.id] ? "다시 제출하기" : "풀이 제출하기"} {!closed && <span aria-hidden>→</span>}
-              </button>
+              <>
+                <AnswerField problemId={problem.id} value={answer} onChange={saveAnswer} onSubmit={() => !sending && submit()} disabled={sending || closed} />
+                <button
+                  onClick={submit}
+                  disabled={sending || closed}
+                  className="flex h-[54px] shrink-0 items-center gap-2 rounded-full bg-honey px-6 font-semibold text-ink shadow-sm transition hover:bg-honey-deep disabled:opacity-50"
+                >
+                  {closed ? "마감된 과제예요" : sending ? "제출 중…" : done[problem.id] ? "다시 제출하기" : "풀이 제출하기"} {!closed && <span aria-hidden>→</span>}
+                </button>
+              </>
             }
           />
           )}
@@ -436,6 +464,15 @@ function ResultCard({ r }: { r: MyResult | undefined }) {
         </div>
         {ai?.answer && <div className="mt-1 text-muted">내 답으로 읽은 것: <span className="text-ink">{ai.answer}</span></div>}
       </div>
+
+      {r.answerText && (
+        <div className="rounded-2xl border border-line bg-paper px-4 py-3 text-sm">
+          <span className="text-muted">답안 칸에 쓴 답: </span>
+          <b className="font-[family-name:var(--font-math)]">{r.answerText}</b>
+          {r.answerCorrect === true && <span className="ml-2 font-semibold text-[#5d7a50]">✓ 정답과 같아요</span>}
+          {r.answerCorrect === false && <span className="ml-2 font-semibold text-[#b5624f]">✗ 정답과 달라요</span>}
+        </div>
+      )}
 
       {/* 틀렸을 때: 어디가 틀렸는지 (AI가 읽은 내 풀이에서 처음 틀린 줄 + 이유) */}
       {ai?.correct === false && (ai.reason || ai.lines.length > 0) && (

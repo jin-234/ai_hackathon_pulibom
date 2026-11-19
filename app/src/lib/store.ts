@@ -26,6 +26,8 @@ type Row = {
   concept?: string | null;
   problem_answer?: string | null;
   vision_read?: boolean | null;
+  answer_text?: string | null;
+  answer_correct?: boolean | null;
 };
 
 function toSubmission(r: Row): Submission {
@@ -43,6 +45,8 @@ function toSubmission(r: Row): Submission {
     ...unpackOcrRaw(r.ocr_raw),
     ...(r.problem_answer ? { problemAnswer: r.problem_answer } : {}),
     ...(r.vision_read ? { visionRead: true } : {}),
+    ...(r.answer_text ? { answerText: r.answer_text } : {}),
+    ...(r.answer_correct !== undefined ? { answerCorrect: r.answer_correct } : {}),
     status: r.status,
     ...(r.status_message ? { statusMessage: r.status_message } : {}),
     ...(r.analysis ? { analysis: r.analysis } : {}),
@@ -91,8 +95,8 @@ const json = (v: unknown) => (v === undefined || v === null ? null : JSON.string
 export async function saveSubmission(s: Submission, png: Buffer | null) {
   await query(
     `INSERT INTO submissions (id, student_id, problem_id, question, started_at, submitted_at, strokes, events, image,
-                              ocr_lines, ocr_raw, status, status_message, analysis, teacher)
-     VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0), to_timestamp($6 / 1000.0), $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                              ocr_lines, ocr_raw, status, status_message, analysis, teacher, answer_text, answer_correct)
+     VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0), to_timestamp($6 / 1000.0), $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
      ON CONFLICT (id) DO NOTHING`,
     [
       s.id,
@@ -110,6 +114,8 @@ export async function saveSubmission(s: Submission, png: Buffer | null) {
       s.statusMessage ?? null,
       json(s.analysis),
       json(s.teacher),
+      s.answerText ?? null,
+      s.answerCorrect ?? null,
     ],
   );
 }
@@ -122,7 +128,7 @@ export async function readImage(id: string): Promise<Buffer | null> {
 
 // 이미지는 크니까 상세 조회에서도 빼고, 필요할 때 readImage 로 따로 가져온다
 const DETAIL = `s.id, s.student_id, s.problem_id, s.question, s.started_at, s.submitted_at, s.strokes, s.events, s.ocr_lines, s.ocr_raw,
-                s.status, s.status_message, s.analysis, s.teacher, ${ORIGIN_COLUMNS}`;
+                s.status, s.status_message, s.analysis, s.teacher, s.answer_text, s.answer_correct, ${ORIGIN_COLUMNS}`;
 
 export async function getSubmission(id: string): Promise<Submission | null> {
   if (!isId(id)) return null;
@@ -134,7 +140,7 @@ export async function getSubmission(id: string): Promise<Submission | null> {
 export async function listSubmissions(filter: { studentId?: string } = {}): Promise<Submission[]> {
   const rows = await query<Row>(
     `SELECT s.id, s.student_id, s.problem_id, s.question, s.started_at, s.submitted_at, s.events, s.ocr_lines,
-            s.status, s.status_message, s.analysis, s.teacher, ${ORIGIN_COLUMNS}
+            s.status, s.status_message, s.analysis, s.teacher, s.answer_text, s.answer_correct, ${ORIGIN_COLUMNS}
        ${WITH_ORIGIN}
       WHERE ($1::text IS NULL OR s.student_id = $1)
       ORDER BY s.submitted_at DESC`,
@@ -153,6 +159,18 @@ export async function latestStrokes(studentId: string, problemIds: string[]): Pr
     [studentId, problemIds],
   );
   return Object.fromEntries(rows.map((r) => [r.problem_id, r.strokes ?? []]));
+}
+
+// 학생이 문항마다 마지막으로 낸 답안 칸 답 (다시 풀 때 그 답으로 시작)
+export async function latestAnswers(studentId: string, problemIds: string[]): Promise<Record<string, string>> {
+  if (!problemIds.length) return {};
+  const rows = await query<{ problem_id: string; answer_text: string | null }>(
+    `SELECT DISTINCT ON (problem_id) problem_id, answer_text FROM submissions
+      WHERE student_id = $1 AND problem_id = ANY($2)
+      ORDER BY problem_id, submitted_at DESC`,
+    [studentId, problemIds],
+  );
+  return Object.fromEntries(rows.filter((r) => r.answer_text).map((r) => [r.problem_id, r.answer_text!]));
 }
 
 // 바뀐 항목만 UPDATE (분석 파이프라인과 교사 수정이 동시에 와도 서로 덮어쓰지 않게)

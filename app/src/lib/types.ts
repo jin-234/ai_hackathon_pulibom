@@ -147,6 +147,8 @@ export type Submission = {
   question?: string; // 제출 당시 문항 식 (과제가 바뀌어도 보이도록)
   concept?: string; // 문항의 관련 개념 (풀이 기록에서 무슨 항목인지 먼저 보여 준다)
   problemAnswer?: string; // 문항에 선생님이 정한 정답 (교사 화면: 학생 답과 나란히)
+  answerText?: string; // 답안 칸에 따로 쓴 최종 답
+  answerCorrect?: boolean | null; // 답안 칸 답이 정답과 같은지 (null: 비교할 수 없음)
   startedAt: number;
   submittedAt: number;
   strokes: Stroke[];

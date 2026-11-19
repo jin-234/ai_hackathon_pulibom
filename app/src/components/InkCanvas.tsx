@@ -423,7 +423,7 @@ const InkCanvas = forwardRef<
       </div>
 
       <div className="flex flex-wrap items-center gap-3 p-3">
-        <div className="flex flex-wrap items-center gap-1 rounded-2xl border border-line bg-paper px-2 py-1.5 shadow-sm">
+        <div className="flex h-[54px] flex-wrap items-center gap-1 rounded-2xl border border-line bg-paper px-2 shadow-sm">
           {toolBtn("pen", "펜", <PenIcon fill="#2d2b26" />)}
           {toolBtn("pencil", "연필", <PenIcon fill="#c9a36a" />)}
           {toolBtn("highlighter", "형광펜", <PenIcon fill="#f5d66f" wide />)}
@@ -457,7 +457,8 @@ const InkCanvas = forwardRef<
             <span className="h-2 w-2 rounded-full bg-ink" />
           </button>
         </div>
-        <div className="ml-auto">{footerRight}</div>
+        {/* 한 줄에 들어가면 남은 폭을, 넘치면 다음 줄 전체를 채운다 (도구 줄과 양끝이 맞게) */}
+        <div className="flex min-w-[22rem] flex-1 items-center justify-end gap-2">{footerRight}</div>
       </div>
     </div>
   );
