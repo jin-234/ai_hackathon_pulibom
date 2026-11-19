@@ -11,7 +11,8 @@
     "db:import": "tsx scripts/db-import-files.ts",
     "db:demo": "tsx scripts/db-demo.ts",
     "test:weakness": "tsx scripts/test-weakness.ts",
-    "test:ocr": "tsx scripts/test-ocr.ts"
+    "test:ocr": "tsx scripts/test-ocr.ts",
+    "test:graph": "tsx scripts/test-graph.ts"
   },
   "dependencies": {
     "@supabase/realtime-js": "^2.119.1",
