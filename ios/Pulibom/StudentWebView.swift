@@ -90,6 +90,11 @@ struct StudentWebView: UIViewRepresentable {
         settingsGesture.cancelsTouchesInView = false // 펜슬로 쓰는 중인 획을 끊지 않게
         webView.addGestureRecognizer(settingsGesture)
 
+        // 애플펜슬 더블탭 → 웹에 알려서 펜 ↔ 지우개 (InkToolPill 이 받는다)
+        let pencil = UIPencilInteraction()
+        pencil.delegate = context.coordinator
+        webView.addInteraction(pencil)
+
         context.coordinator.webView = webView
         controller.webView = webView
         // 웹은 화면 전환을 주소만 바꿔서(pushState) 하므로 이동 이벤트 대신 주소를 지켜본다
@@ -174,7 +179,7 @@ struct StudentWebView: UIViewRepresentable {
         sv.pinchGestureRecognizer?.isEnabled = true
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, UIGestureRecognizerDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, UIGestureRecognizerDelegate, UIPencilInteractionDelegate {
         var parent: StudentWebView
         weak var webView: WKWebView?
         var lastReloadToken = 0
@@ -214,6 +219,21 @@ struct StudentWebView: UIViewRepresentable {
                 c.refreshing = false
                 c.pull = 0
             }
+        }
+
+        // 설정 → Apple Pencil 에서 더블탭을 '끔'으로 해 두면 무시
+        private func pencilTapped() {
+            guard UIPencilInteraction.preferredTapAction != .ignore else { return }
+            webView?.evaluateJavaScript("window.dispatchEvent(new Event('pulibom:pencil-tap'))")
+        }
+
+        @available(iOS 17.5, *)
+        func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveTap tap: UIPencilInteraction.Tap) {
+            pencilTapped()
+        }
+
+        func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+            pencilTapped()
         }
 
         @objc func openSettings(_ sender: UILongPressGestureRecognizer) {
