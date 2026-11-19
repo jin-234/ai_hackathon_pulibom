@@ -11,6 +11,7 @@ import type { Figure } from "@/lib/figure";
 import { useTeacherClass } from "@/components/useTeacherClass";
 import { makeVariants, solveLinear, type Solved } from "@/lib/equation";
 import { formatDue, statusOf, type Assignment as BaseAssignment, type AssignmentStatus } from "@/lib/types";
+import { CHOICE_MARKS, choiceBody, choiceMarks, FORMAT_LABEL, formatOf, joinChoices, splitChoices, type ProblemFormat } from "@/lib/problemFormat";
 
 // 목록 API: 정해진 학생에게만 낸 과제(보충)는 받은 학생과 낸 문항 수가 같이 온다
 type Recipient = { id: string; name: string; number: number | null; solved: number };
@@ -34,10 +35,56 @@ const STATUS_BADGE: Record<AssignmentStatus, { label: string; cls: string }> = {
 // templateId: 문제은행 틀에서 만든 문항 (교육과정). 문제를 고치면 틀·정답 연결을 뗀다
 // ai: AI 가 만든 문항 초안 (정답을 교사가 확인해야 함)
 // figure: 문항 그림 (AI 가 만든 설계도 또는 선생님이 올린 이미지)
-type Draft = { key: string; question: string; answer: string; solution: string; concept: string; open: boolean; templateId?: string; ai?: boolean; figure?: Figure };
+// format: 객관식이면 question 은 문제 글만, 보기는 options (번호 없이), 정답은 correct (보기 순서, 여러 개 가능)
+type Draft = {
+  key: string;
+  question: string;
+  answer: string;
+  solution: string;
+  concept: string;
+  open: boolean;
+  templateId?: string;
+  ai?: boolean;
+  figure?: Figure;
+  format: ProblemFormat;
+  options: string[];
+  correct: number[];
+};
 
 const newKey = () => Math.random().toString(36).slice(2, 9);
-const emptyDraft = (question = ""): Draft => ({ key: newKey(), question, answer: "", solution: "", concept: "", open: false });
+const MIN_OPTIONS = 2;
+const MAX_OPTIONS = 5;
+const emptyOptions = () => Array.from({ length: MAX_OPTIONS }, () => "");
+const emptyDraft = (question = "", format: ProblemFormat = "essay"): Draft => ({
+  key: newKey(),
+  question,
+  answer: "",
+  solution: "",
+  concept: "",
+  open: false,
+  format,
+  options: emptyOptions(),
+  correct: [],
+});
+
+// "문제 글 ① 보기 ② 보기 …" + 정답 "③ …" → 객관식 칸 (문제 글 · 보기 · 정답 순서)
+function splitToChoice(question: string, answer: string): Pick<Draft, "question" | "options" | "correct"> {
+  const { stem, choices } = splitChoices(question);
+  const marks = choiceMarks(answer);
+  const correct = choices.map((c, k) => (marks.some((m) => c.startsWith(m)) ? k : -1)).filter((k) => k >= 0);
+  return { question: stem, options: choices.map(choiceBody), correct };
+}
+
+// 출제할 때 보낼 문제 글·정답. 객관식은 빈 보기를 빼고 번호를 다시 매긴다
+function toQuestion(d: Draft): { question: string; answer: string } {
+  if (d.format !== "choice") return { question: d.question, answer: d.answer };
+  const filled = d.options.map((o, i) => ({ o: o.trim(), i })).filter((x) => x.o);
+  const marks = filled.map((x, at) => (d.correct.includes(x.i) ? CHOICE_MARKS[at] : "")).filter(Boolean);
+  return { question: joinChoices(d.question, filled.map((x) => x.o)), answer: marks.join(", ") };
+}
+const filledOptions = (d: Draft) => d.options.filter((o) => o.trim()).length;
+// 고른 정답 보기들의 새 번호 (빈 보기를 뺀 순서, 예: "②, ④")
+const correctMark = (d: Draft) => toQuestion(d).answer;
 
 function trySolve(q: string): Solved | null {
   if (!q.trim()) return null;
@@ -96,8 +143,9 @@ export default function AssignPage() {
       return n;
     });
 
-  const solved = useMemo(() => drafts.map((d) => trySolve(d.question)), [drafts]);
+  const solved = useMemo(() => drafts.map((d) => (d.format === "essay" ? trySolve(d.question) : null)), [drafts]);
   const count = drafts.filter((d) => d.question.trim()).length;
+  const formatCount = (f: ProblemFormat) => drafts.filter((d) => d.question.trim() && d.format === f).length;
 
   const patch = (key: string, p: Partial<Draft>) =>
     setDrafts((ds) =>
@@ -106,6 +154,30 @@ export default function AssignPage() {
         // 문제은행 문항의 문제를 고치면 정답을 모르게 되니 틀·정답 연결을 뗀다 (개념은 남김)
         if (d.templateId && p.question !== undefined && p.question !== d.question) return { ...d, ...p, templateId: undefined, answer: "" };
         return { ...d, ...p };
+      }),
+    );
+  // 유형 바꾸기: 서술형 → 객관식은 문제 글에 ①②가 있으면 보기로 나눠 넣고, 객관식 → 서술형은 문제 글만 남긴다 (보기는 기억해 둠)
+  const setFormat = (key: string, format: ProblemFormat) =>
+    setDrafts((ds) =>
+      ds.map((d) => {
+        if (d.key !== key || d.format === format) return d;
+        if (format === "choice") {
+          const split = splitToChoice(d.question, d.answer);
+          const options = split.options.length ? [...split.options, ...emptyOptions()].slice(0, Math.max(MAX_OPTIONS, split.options.length)) : d.options;
+          return { ...d, format, templateId: undefined, ...(split.options.length ? { ...split, options } : {}) };
+        }
+        const picked = d.correct.map((k) => d.options[k]?.trim()).filter(Boolean).join(", ");
+        return { ...d, format, answer: picked || d.answer };
+      }),
+    );
+  const patchOption = (key: string, k: number, value: string) =>
+    setDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, options: d.options.map((o, i) => (i === k ? value : o)) } : d)));
+  const removeOption = (key: string, k: number) =>
+    setDrafts((ds) =>
+      ds.map((d) => {
+        if (d.key !== key || d.options.length <= MIN_OPTIONS) return d;
+        const correct = d.correct.filter((c) => c !== k).map((c) => (c > k ? c - 1 : c));
+        return { ...d, options: d.options.filter((_, i) => i !== k), correct };
       }),
     );
   const remove = (key: string) => setDrafts((ds) => (ds.length > 1 ? ds.filter((d) => d.key !== key) : [emptyDraft()]));
@@ -120,7 +192,14 @@ export default function AssignPage() {
     try {
       const questions = drafts
         .filter((d) => d.question.trim())
-        .map(({ question, answer, solution, concept, templateId, figure }) => ({ question, answer, solution, concept, ...(templateId ? { templateId } : {}), ...(figure ? { figure } : {}) }));
+        .map((d) => ({
+          ...toQuestion(d),
+          solution: d.solution,
+          concept: d.concept,
+          format: d.format,
+          ...(d.templateId ? { templateId: d.templateId } : {}),
+          ...(d.figure ? { figure: d.figure } : {}),
+        }));
       const res = await fetch("/api/assignments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -197,7 +276,9 @@ export default function AssignPage() {
                 setDrafts((ds) => [
                   ...ds.filter((d) => d.question.trim()),
                   ...items.map((it) => ({
-                    ...emptyDraft(it.question),
+                    // 유형은 문제 글로 정한다 (AI 객관식 문항은 question 끝에 ① ~ ⑤ 보기가 붙어 온다)
+                    ...emptyDraft(it.question, formatOf(it)),
+                    ...(formatOf(it) === "choice" ? splitToChoice(it.question, it.answer) : {}),
                     answer: it.answer,
                     concept: it.concept,
                     solution: it.solution.join("\n"),
@@ -215,20 +296,94 @@ export default function AssignPage() {
           </label>
 
           <div className="flex flex-col gap-3">
-            <span className="text-sm text-muted">문항</span>
+            <div className="flex items-baseline gap-2">
+              <span className="text-sm text-muted">문항</span>
+              {count > 0 && (
+                <span className="text-[11px] text-muted">
+                  객관식 {formatCount("choice")} · 서술형 {formatCount("essay")}
+                </span>
+              )}
+            </div>
             {drafts.map((d, i) => {
               const s = solved[i];
               const hasText = d.question.trim().length > 0;
+              const choice = d.format === "choice";
+              const mark = choice ? correctMark(d) : "";
               return (
                 <div key={d.key} className="rounded-2xl border border-line bg-cream/60 p-3">
                   <div className="flex items-start gap-2">
                     <span className="mt-1.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-honey-soft text-xs font-bold">{i + 1}</span>
-                    <AutoGrowTextarea
-                      value={d.question}
-                      onChange={(e) => patch(d.key, { question: e.target.value })}
-                      placeholder="식이나 문장형 문제를 자유롭게 입력하세요"
-                      className="input min-h-11 resize-none"
-                    />
+                    <div className="flex min-w-0 flex-1 flex-col gap-2">
+                      <div role="radiogroup" aria-label={`${i + 1}번 문항 유형`} className="flex w-fit rounded-full border border-line bg-paper p-0.5 text-xs">
+                        {(["essay", "choice"] as const).map((f) => (
+                          <button
+                            key={f}
+                            type="button"
+                            role="radio"
+                            aria-checked={d.format === f}
+                            onClick={() => setFormat(d.key, f)}
+                            className={`rounded-full px-3 py-1 ${d.format === f ? "bg-honey font-semibold text-ink" : "text-muted hover:bg-sand"}`}
+                          >
+                            {FORMAT_LABEL[f]}
+                          </button>
+                        ))}
+                      </div>
+                      <AutoGrowTextarea
+                        value={d.question}
+                        onChange={(e) => patch(d.key, { question: e.target.value })}
+                        placeholder={choice ? "객관식 문제를 입력하세요 (예: 다음 중 x^2 - 4 를 인수분해한 것은?)" : "식이나 문장형 문제를 자유롭게 입력하세요"}
+                        className="input min-h-11 resize-none"
+                      />
+                      {/* 객관식 보기: 번호를 누르면 정답으로 정해진다 */}
+                      {choice && (
+                        <div className="flex flex-col gap-1.5">
+                          {d.options.map((o, k) => {
+                            const on = d.correct.includes(k);
+                            return (
+                              <div key={k} className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={on}
+                                  aria-label={`${k + 1}번 보기를 정답으로`}
+                                  title={on ? "정답에서 빼기" : "정답으로 정하기 (여러 개 고를 수 있어요)"}
+                                  onClick={() => patch(d.key, { correct: on ? d.correct.filter((c) => c !== k) : [...d.correct, k].sort((a, b) => a - b) })}
+                                  className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-lg transition ${
+                                    on ? "bg-sage font-bold text-white" : "border border-line bg-paper text-ink hover:bg-sand"
+                                  }`}
+                                >
+                                  {CHOICE_MARKS[k]}
+                                </button>
+                                <input
+                                  value={o}
+                                  onChange={(e) => patchOption(d.key, k, e.target.value)}
+                                  placeholder={`보기 ${k + 1}`}
+                                  className={`input py-1.5 text-sm ${on ? "border-sage" : ""}`}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => removeOption(d.key, k)}
+                                  disabled={d.options.length <= MIN_OPTIONS}
+                                  aria-label={`${k + 1}번 보기 삭제`}
+                                  className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-xs text-muted hover:bg-sand disabled:opacity-30"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            );
+                          })}
+                          {d.options.length < MAX_OPTIONS && (
+                            <button
+                              type="button"
+                              onClick={() => patch(d.key, { options: [...d.options, ""] })}
+                              className="w-fit rounded-full border border-dashed border-line px-3 py-1 text-xs text-muted hover:bg-sand"
+                            >
+                              + 보기 추가
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                     <button onClick={() => remove(d.key)} aria-label="문항 삭제" className="mt-1 grid h-9 w-9 shrink-0 place-items-center rounded-full text-muted hover:bg-sand">
                       ✕
                     </button>
@@ -240,7 +395,23 @@ export default function AssignPage() {
                   {hasText && (
                     <div className="mt-2 flex flex-col gap-2 pl-9 text-xs">
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                        {d.templateId ? (
+                        {choice ? (
+                          <>
+                            {filledOptions(d) < MIN_OPTIONS ? (
+                              <span className="rounded-full bg-salmon-soft px-2.5 py-1 text-[#b5624f]">보기를 두 개 이상 입력해 주세요</span>
+                            ) : mark ? (
+                              <span className={`rounded-full px-2.5 py-1 ${d.ai ? "bg-honey-soft text-olive" : "bg-sage-soft text-[#5d7a50]"}`}>
+                                {d.ai ? `AI 초안 · 정답 ${mark} 확인해 주세요` : `✓ 정답 ${mark}`}
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-salmon-soft px-2.5 py-1 text-[#b5624f]">보기 번호를 눌러 정답을 골라 주세요 (여러 개 가능)</span>
+                            )}
+                            {filledOptions(d) >= MIN_OPTIONS && mark.includes(",") && (
+                              <span className="rounded-full bg-honey-soft px-2.5 py-1 text-olive">정답 여러 개 · 학생은 모두 골라야 정답</span>
+                            )}
+                            {d.concept.trim() && <span className="rounded-full bg-sand px-2.5 py-1 text-muted">{d.concept}</span>}
+                          </>
+                        ) : d.templateId ? (
                           <>
                             <span className="rounded-full bg-sage-soft px-2.5 py-1 text-[#5d7a50]">✓ 정답 {d.answer}</span>
                             <span className="rounded-full bg-sand px-2.5 py-1 text-muted">{d.concept}</span>
@@ -267,22 +438,24 @@ export default function AssignPage() {
                           aria-expanded={d.open}
                           className="ml-auto rounded-full px-2.5 py-1 text-muted underline-offset-2 hover:underline"
                         >
-                          {d.open ? "접기" : s || d.templateId || d.ai ? "정답·해설 수정" : "정답·해설 입력"}
+                          {d.open ? "접기" : choice ? "개념·해설 입력" : s || d.templateId || d.ai ? "정답·해설 수정" : "정답·해설 입력"}
                         </button>
                       </div>
                       {d.open && (
                         <div className="grid gap-2 sm:grid-cols-2">
+                          {!choice && (
                           <input
                             value={d.answer}
                             onChange={(e) => patch(d.key, { answer: e.target.value })}
                             placeholder={s ? `정답 (비우면 ${s.answer})` : "정답 (예: x = 4, 12개)"}
                             className="input text-sm"
                           />
+                          )}
                           <input
                             value={d.concept}
                             onChange={(e) => patch(d.key, { concept: e.target.value })}
                             placeholder={s ? `관련 개념 (비우면 ${s.concept})` : "관련 개념 (예: 일차방정식의 활용)"}
-                            className="input text-sm"
+                            className={`input text-sm ${choice ? "sm:col-span-2" : ""}`}
                           />
                           <textarea
                             value={d.solution}
@@ -298,12 +471,17 @@ export default function AssignPage() {
                 </div>
               );
             })}
-            <button
-              onClick={() => setDrafts((ds) => [...ds, emptyDraft()])}
-              className="rounded-2xl border border-dashed border-line py-2.5 text-sm text-muted hover:bg-sand"
-            >
-              + 문항 추가
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              {(["essay", "choice"] as const).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setDrafts((ds) => [...ds, emptyDraft("", f)])}
+                  className="rounded-2xl border border-dashed border-line py-2.5 text-sm text-muted hover:bg-sand"
+                >
+                  + {FORMAT_LABEL[f]} 문항 추가
+                </button>
+              ))}
+            </div>
           </div>
 
           <label className="flex items-center gap-2 text-sm">
@@ -453,6 +631,10 @@ export default function AssignPage() {
                   </button>
                 ) : null}
                 {a.problems.length}문항
+                {(() => {
+                  const nc = a.problems.filter((p) => formatOf(p) === "choice").length;
+                  return nc ? ` (객관식 ${nc} · 서술형 ${a.problems.length - nc})` : "";
+                })()}
                 {a.createdAt
                   ? ` · ${new Date(a.createdAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}`
                   : " · 기본 시연 과제"}
@@ -485,12 +667,53 @@ export default function AssignPage() {
                   {a.problems.map((p, i) => (
                     <li key={p.id} className="flex gap-2 rounded-xl bg-paper/80 px-3 py-1.5 text-sm leading-relaxed">
                       <span className="shrink-0 text-xs leading-6 text-muted">{i + 1}</span>
+                      <span
+                        className={`mt-0.5 shrink-0 self-start rounded-full px-1.5 py-0.5 text-[10px] leading-4 ${
+                          formatOf(p) === "choice" ? "bg-honey-soft text-olive" : "bg-sand text-muted"
+                        }`}
+                      >
+                        {FORMAT_LABEL[formatOf(p)]}
+                      </span>
                       <span className={`min-w-0 break-words ${p.free ? "" : "font-[family-name:var(--font-math)] italic"}`}>
                         <QuestionText text={p.question} />
                         {p.figure && <FigureView figure={p.figure} className="mt-1.5" />}
                       </span>
                       {/* 설정한 정답 (비워 둔 일차방정식은 풀이기 정답). 누르면 고치기 */}
-                      {answerEdit?.problemId === p.id ? (
+                      {answerEdit?.problemId === p.id && formatOf(p) === "choice" ? (
+                        // 객관식: 보기 번호를 눌러 정답을 고르고 (여러 개 가능) 저장
+                        <div className="ml-auto flex shrink-0 flex-wrap items-center gap-1 self-start">
+                          {splitChoices(p.question).choices.map((c) => {
+                            const m = c.charAt(0);
+                            const marks = choiceMarks(answerEdit.value);
+                            const on = marks.includes(m);
+                            return (
+                              <button
+                                key={m}
+                                type="button"
+                                title={c}
+                                aria-pressed={on}
+                                onClick={() =>
+                                  setAnswerEdit({ ...answerEdit, value: (on ? marks.filter((x) => x !== m) : [...marks, m]).join(", ") })
+                                }
+                                className={`grid h-7 w-7 place-items-center rounded-full text-sm ${on ? "bg-sage font-bold text-white" : "border border-line bg-white hover:bg-sand"}`}
+                              >
+                                {m}
+                              </button>
+                            );
+                          })}
+                          <button
+                            type="button"
+                            disabled={!choiceMarks(answerEdit.value).length}
+                            onClick={async () => (await update(a.id, { answer: { problemId: p.id, answer: answerEdit.value } })) && setAnswerEdit(null)}
+                            className="rounded-full bg-sage px-2.5 py-0.5 text-xs text-white disabled:opacity-40"
+                          >
+                            저장
+                          </button>
+                          <button type="button" onClick={() => setAnswerEdit(null)} className="rounded-full border border-line px-2 py-0.5 text-xs text-muted">
+                            취소
+                          </button>
+                        </div>
+                      ) : answerEdit?.problemId === p.id ? (
                         <form
                           className="ml-auto flex shrink-0 items-center gap-1 self-start"
                           onSubmit={async (e) => {
@@ -514,7 +737,8 @@ export default function AssignPage() {
                         </form>
                       ) : (
                         (() => {
-                          const ans = p.answer?.trim() || trySolve(p.question)?.answer;
+                          // 객관식은 번호만 짧게
+                          const ans = formatOf(p) === "choice" ? choiceMarks(p.answer).join(", ") : p.answer?.trim() || trySolve(p.question)?.answer;
                           return (
                             <button
                               type="button"

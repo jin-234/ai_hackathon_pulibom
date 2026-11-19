@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Point, Stroke } from "@/lib/types";
+import { CHOICE_MARKS, choiceMarks } from "@/lib/problemFormat";
 
 // 답안 칸: 제출 버튼 바로 왼쪽에서 최종 답을 따로 받는다
 // - 애플펜슬로 쓰면 칸 위 투명 캔버스에 필기가 보이고, 마지막 획 뒤 0.9초 멈추면 서버에서 읽어 글자로 바꾼다
@@ -320,39 +321,50 @@ export default function AnswerField({
   );
 }
 
-// 객관식 답안 칸: 보기 번호(①②③…)를 나열해서 하나를 고른다. 값은 고른 보기 전체 ("③ (x - 2)(x + 2)")
+// 객관식 답안 칸: 보기 번호(①②③…)를 나열해서 고른다.
+//  정답 하나: 값은 고른 보기 전체 ("③ (x - 2)(x + 2)") / 정답 여러 개(multiple): 고른 번호들 ("②, ④")
 export function ChoiceField({
   choices,
   value,
   onChange,
   disabled,
+  multiple,
 }: {
   choices: string[];
   value: string;
   onChange: (v: string) => void;
   disabled?: boolean;
+  multiple?: boolean;
 }) {
-  const picked = value.trim().charAt(0);
+  const picked = multiple ? choiceMarks(value) : [value.trim().charAt(0)];
   return (
     <div
-      role="radiogroup"
-      aria-label="답 고르기"
+      role={multiple ? "group" : "radiogroup"}
+      aria-label={multiple ? "답 모두 고르기" : "답 고르기"}
       className={`flex h-[54px] min-w-0 flex-1 items-center gap-1.5 rounded-full border border-honey bg-paper pr-2 ${disabled ? "opacity-50" : ""}`}
     >
-      <span className="shrink-0 pl-5 pr-2 font-extrabold text-ink">답</span>
+      <span className="flex shrink-0 flex-col items-center pl-5 pr-2 leading-tight">
+        <span className="font-extrabold text-ink">답</span>
+        {multiple && <span className="text-[10px] font-semibold text-olive">모두</span>}
+      </span>
       {choices.map((c) => {
         const mark = c.charAt(0);
-        const on = mark === picked;
+        const on = picked.includes(mark);
+        const toggle = () => {
+          if (!multiple) return onChange(on ? "" : c);
+          const next = on ? picked.filter((m) => m !== mark) : [...picked, mark];
+          onChange(CHOICE_MARKS.filter((m) => next.includes(m)).join(", "));
+        };
         return (
           <button
             key={mark}
             type="button"
-            role="radio"
+            role={multiple ? "checkbox" : "radio"}
             aria-checked={on}
             aria-label={c}
             title={c}
             disabled={disabled}
-            onClick={() => onChange(on ? "" : c)}
+            onClick={toggle}
             className={`grid h-10 min-w-10 flex-1 place-items-center rounded-full text-xl transition ${
               on ? "bg-honey font-bold text-ink ring-2 ring-honey-deep" : "text-ink hover:bg-sand"
             }`}

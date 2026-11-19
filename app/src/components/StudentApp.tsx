@@ -1,6 +1,7 @@
 "use client";
 import FigureView from "@/components/FigureView";
-import QuestionText, { splitChoices } from "@/components/QuestionText";
+import QuestionText from "@/components/QuestionText";
+import { FORMAT_LABEL, formatOf, isMultiAnswer, splitChoices } from "@/lib/problemFormat";
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -108,8 +109,11 @@ export default function StudentApp({
   const scratchKey = (problemId: string) => `pulibom:draft-scratch:${studentId}:${problemId}`;
   const draftAtKey = (problemId: string) => `pulibom:draft-at:${studentId}:${problemId}`;
   const figure = problem.figure;
-  // 객관식이면 답안 칸 대신 보기 번호를 골라 답한다
-  const choices = splitChoices(problem.question).choices;
+  // 객관식이면 답안 칸 대신 보기 번호를 골라 답한다 (풀이 칸은 연습용으로 그대로 둔다)
+  const format = formatOf(problem);
+  const choices = format === "choice" ? splitChoices(problem.question).choices : [];
+  const isChoice = choices.length > 0;
+  const multiAnswer = isChoice && isMultiAnswer(problem); // 정답이 여러 개: 보기를 모두 고른다
   // 자동 저장: 쓰는 중인 풀이를 이 기기에 저장해서, 앱을 껐다 켜도 이어서 쓸 수 있게 (제출하면 지운다)
   const draftKey = (problemId: string) => `pulibom:draft:${studentId}:${problemId}`;
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -263,14 +267,15 @@ export default function StudentApp({
 
   const send = async () => {
     // 답안 칸에 펜으로 쓰고 바로 제출해도 마지막 글자가 빠지지 않게, 남은 필기를 먼저 읽는다
-    const answerNow = choices ? answer : ((await answerFlush.current?.().catch(() => answer)) ?? answer);
+    const answerNow = isChoice ? answer : ((await answerFlush.current?.().catch(() => answer)) ?? answer);
     const data = canvas.current?.getData();
     if (!data) return;
-    if (data.strokes.length === 0 && !confirm("정리 풀이 칸이 비어 있어요. 그래도 제출할까요?")) return;
+    // 객관식은 풀이 없이 보기만 골라도 낼 수 있다
+    if (data.strokes.length === 0 && !isChoice && !confirm("정리 풀이 칸이 비어 있어요. 그래도 제출할까요?")) return;
     const sc = pad.current?.getData();
     const scratch = sc?.strokes.length ? { strokes: sc.strokes, imageDataUrl: sc.imageDataUrl } : undefined;
     const answerText = answerNow.trim();
-    if (!answerText && !confirm("답안 칸이 비어 있어요. 그래도 제출할까요?")) return;
+    if (!answerText && !confirm(isChoice ? "아직 보기를 고르지 않았어요. 그래도 제출할까요?" : "답안 칸이 비어 있어요. 그래도 제출할까요?")) return;
     // 이 문항의 자동 저장은 보내지 않는다 (제출 뒤에 도착하면 지운 기록이 되살아난다). 다른 문항 것은 지금 보낸다
     delete pendingRef.current[problem.id];
     flushDrafts();
@@ -484,8 +489,11 @@ export default function StudentApp({
         <main className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-4 p-4 md:landscape:grid-cols-[minmax(300px,360px)_1fr] md:landscape:grid-rows-1 md:landscape:gap-5 md:landscape:p-5">
           <section key={problem.id} className="problem-in flex max-h-[42dvh] flex-col gap-4 overflow-y-auto rounded-3xl border border-line bg-paper p-5 md:landscape:max-h-none md:landscape:p-6">
             <div className="flex flex-col gap-1.5">
-              <div className="w-fit rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold tracking-[0.12em] text-muted">
-                QUESTION {String(idx + 1).padStart(2, "0")}
+              <div className="flex items-center gap-1.5">
+                <div className="w-fit rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold tracking-[0.12em] text-muted">
+                  QUESTION {String(idx + 1).padStart(2, "0")}
+                </div>
+                <FormatBadge format={format} multi={multiAnswer} />
               </div>
               <h1 className="text-2xl font-extrabold">채점 결과를 볼까요?</h1>
             </div>
@@ -494,7 +502,7 @@ export default function StudentApp({
                 problem.free ? "py-5 text-left text-base leading-relaxed" : "py-10 text-center font-[family-name:var(--font-math)] text-4xl"
               }`}
             >
-              {problem.question}
+              <QuestionText text={problem.question} />
             </div>
             {/* 문항 그림 (도형·좌표·그래프·입체도형 또는 선생님이 올린 그림) */}
             {problem.figure && <FigureView figure={problem.figure} className="mx-auto" />}
@@ -543,8 +551,11 @@ export default function StudentApp({
           {!figure && (
           <section key={problem.id} className="problem-in flex shrink-0 items-stretch gap-3">
             <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-              <div className="w-fit rounded-full border border-line px-3 py-0.5 text-[11px] font-bold tracking-[0.14em] text-olive">
-                QUESTION {String(idx + 1).padStart(2, "0")}
+              <div className="flex items-center gap-1.5">
+                <div className="w-fit rounded-full border border-line px-3 py-0.5 text-[11px] font-bold tracking-[0.14em] text-olive">
+                  QUESTION {String(idx + 1).padStart(2, "0")}
+                </div>
+                <FormatBadge format={format} multi={multiAnswer} />
               </div>
               <div
                 className={`max-h-[15dvh] min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words rounded-[1.25rem] border border-line bg-paper px-4 py-2.5 ${
@@ -611,8 +622,11 @@ export default function StudentApp({
                       // 그림 문제: 연습장 위쪽에 문제 글과 그림을 깔아 두고 그 위에 그린다
                       figure ? (
                         <div className="flex flex-col gap-2">
-                          <span className="w-fit rounded-full border border-line bg-paper px-2.5 py-0.5 text-[10px] font-bold tracking-[0.14em] text-olive">
-                            QUESTION {String(idx + 1).padStart(2, "0")}
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-fit rounded-full border border-line bg-paper px-2.5 py-0.5 text-[10px] font-bold tracking-[0.14em] text-olive">
+                              QUESTION {String(idx + 1).padStart(2, "0")}
+                            </span>
+                            <FormatBadge format={format} multi={multiAnswer} />
                           </span>
                           <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-ink">
                             <QuestionText text={problem.question} />
@@ -651,8 +665,8 @@ export default function StudentApp({
             <div className="flex flex-wrap items-center gap-3">
               <InkToolPill tool={tool} setTool={setTool} color={color} setColor={setColor} thick={thick} setThick={setThick} />
               <div className="flex min-w-[22rem] flex-1 items-center gap-3">
-                {choices.length ? (
-                  <ChoiceField choices={choices} value={answer} onChange={saveAnswer} disabled={sending || closed} />
+                {isChoice ? (
+                  <ChoiceField choices={choices} value={answer} onChange={saveAnswer} disabled={sending || closed} multiple={multiAnswer} />
                 ) : (
                   <AnswerField problemId={problem.id} value={answer} onChange={saveAnswer} onSubmit={() => void submit()} disabled={closed} flushRef={answerFlush} />
                 )}
@@ -673,6 +687,19 @@ export default function StudentApp({
         </main>
       )}
     </div>
+  );
+}
+
+// 문항 유형 표시 (객관식: 보기를 고르기 / 서술형: 풀이를 쓰고 답 적기)
+function FormatBadge({ format, multi }: { format: ReturnType<typeof formatOf>; multi?: boolean }) {
+  return (
+    <span
+      className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${format === "choice" ? "bg-honey-soft text-olive" : "bg-sage-soft text-[#5d7a50]"}`}
+      title={multi ? "정답이 여러 개예요. 맞는 보기를 모두 골라요" : format === "choice" ? "보기 중에서 답을 골라요" : "풀이를 쓰고 답을 적어요"}
+    >
+      {FORMAT_LABEL[format]}
+      {multi && " · 정답 여러 개"}
+    </span>
   );
 }
 
