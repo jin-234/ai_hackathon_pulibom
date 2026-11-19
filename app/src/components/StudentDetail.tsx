@@ -93,7 +93,6 @@ export default function StudentDetail({
     jumped.current = true;
     setTimeout(() => tabsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
   }, [subs.length]);
-  const needReview = shownSubs.filter((x) => x.status === "needs_review" && !x.teacher?.confirmedAt).length;
 
   return (
     <div className="flex flex-col gap-4">
@@ -115,7 +114,7 @@ export default function StudentDetail({
           onClick={() => setShowMessages((v) => !v)}
           aria-expanded={showMessages}
           className={`ml-auto flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm ${
-            showMessages ? "border-ink bg-ink font-semibold text-paper" : "border-line hover:bg-sand"
+            showMessages ? "border-honey bg-honey font-semibold text-ink" : "border-line hover:bg-sand"
           }`}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round">
@@ -164,11 +163,10 @@ export default function StudentDetail({
               role="tab"
               aria-selected={activeTab === k}
               onClick={() => setTab(k)}
-              className={`rounded-full px-4 py-1.5 text-sm ${activeTab === k ? "bg-ink font-semibold text-paper" : "text-muted hover:bg-sand"}`}
+              className={`rounded-full px-4 py-1.5 text-sm ${activeTab === k ? "bg-honey font-semibold text-ink" : "text-muted hover:bg-sand"}`}
             >
               {label}
               {n > 0 && <span className="ml-1 text-xs opacity-70">{n}</span>}
-              {k === "subs" && needReview > 0 && <span className="ml-1.5 rounded-full bg-honey px-1.5 text-xs text-ink">확인 {needReview}</span>}
             </button>
           ))}
         </div>
@@ -203,16 +201,23 @@ export default function StudentDetail({
   );
 }
 
+// 정답·오답·보류 색: 한눈에 구별되게 진한 바탕 (정답 초록·오답 빨강은 흰 글씨 대비 4.5:1 이상, 보류는 노랑에 검정 글씨)
+const RESULT_TONE = {
+  ok: "border-sage bg-sage text-white",
+  wrong: "border-[#b9503a] bg-[#b9503a] text-white",
+  hold: "border-honey-deep bg-honey text-ink",
+};
+
 // 풀이 기록: 항목(개념)별 맞음·틀림 수 → 항목을 누르면 그 문제 목록 → 문제를 누르면 원본·인식·AI 분석·선생님 확인이 펼쳐진다
 type Filter = SubFilter;
 const resultOf = (s: Submission) =>
   s.status === "pending"
-    ? { label: "분석 중", cls: "bg-honey-soft text-olive" }
+    ? { label: "분석 중", cls: RESULT_TONE.hold }
     : correctOf(s) === true
-      ? { label: "정답", cls: "bg-sage-soft text-[#5d7a50]" }
+      ? { label: "정답", cls: RESULT_TONE.ok }
       : correctOf(s) === false
-        ? { label: "오답", cls: "bg-salmon-soft text-[#b5624f]" }
-        : { label: "판정 보류", cls: "bg-sand text-muted" };
+        ? { label: "오답", cls: RESULT_TONE.wrong }
+        : { label: "판정 보류", cls: RESULT_TONE.hold };
 
 function SubmissionList({
   groups,
@@ -303,7 +308,7 @@ function SubmissionList({
                     {/* 맞음·틀림 비율 막대 */}
                     <span className="flex h-1.5 w-16 overflow-hidden rounded-full bg-sand" aria-hidden>
                       <span className="bg-sage" style={{ width: `${(correct / c.items.length) * 100}%` }} />
-                      <span className="bg-salmon" style={{ width: `${(wrong / c.items.length) * 100}%` }} />
+                      <span className="bg-[#b9503a]" style={{ width: `${(wrong / c.items.length) * 100}%` }} />
                     </span>
                     <span className="text-xs text-muted">{isOpen ? "▲" : "▼"}</span>
                   </button>
@@ -315,20 +320,20 @@ function SubmissionList({
                           const needs = x.status === "needs_review" && !x.teacher?.confirmedAt;
                           const tone =
                             correctOf(x) === true && x.status !== "pending"
-                              ? "border-sage/40 bg-sage-soft text-[#5d7a50]"
+                              ? RESULT_TONE.ok
                               : correctOf(x) === false && x.status !== "pending"
-                                ? "border-[#b5624f]/30 bg-salmon-soft text-[#b5624f]"
-                                : "border-line bg-sand text-muted";
+                                ? RESULT_TONE.wrong
+                                : RESULT_TONE.hold;
                           return (
                             <button
                               key={x.id}
                               onClick={() => setOpen(open === x.id ? null : x.id)}
                               aria-pressed={open === x.id}
                               title={`${i + 1}번 · ${r.label} · ${x.question ?? getProblem(x.problemId)?.question ?? ""}${needs ? " · 확인 필요" : ""}`}
-                              className={`relative grid h-8 min-w-8 place-items-center rounded-lg border px-1.5 text-xs font-semibold tabular-nums transition hover:brightness-95 ${tone} ${open === x.id ? "ring-2 ring-honey-deep" : ""}`}
+                              className={`relative grid h-8 min-w-8 place-items-center rounded-lg border px-1.5 text-xs font-semibold tabular-nums transition hover:brightness-95 ${tone} ${open === x.id ? "ring-2 ring-honey-deep ring-offset-2 ring-offset-paper" : ""}`}
                             >
                               {i + 1}
-                              {needs && <span aria-label="확인 필요" className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border border-paper bg-honey-deep" />}
+                              {needs && <span aria-label="확인 필요" className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border border-paper bg-[#b07800]" />}
                             </button>
                           );
                         })}
