@@ -308,4 +308,6 @@ export type StudentSummary = {
   checkQuestions: string[]; // 교사가 학생에게 던질 확인 질문
   practice: string[]; // 보충 연습 방향
   cautions: string[]; // 판독 어려움·근거 부족 등 교사가 직접 확인할 점
+  // 고등학생: 틀린 풀이를 다시 봐야 할 중학 기초 테마로 묶은 것 (foundations.ts, 코드가 센다. 많은 순)
+  foundations?: { no: number; name: string; covers: string; count: number; problems: number; examples: string[] }[];
 };
